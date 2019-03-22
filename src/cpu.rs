@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct FlagsRegister {
     zero: bool,
@@ -173,6 +175,24 @@ enum Reg {
     L,
 }
 
+impl Reg {
+    fn from_byte(value: u8) -> Reg {
+        match value {
+            0x07 => Reg::A,
+            0x00 => Reg::B,
+            0x01 => Reg::C,
+            0x02 => Reg::D,
+            0x03 => Reg::E,
+            0x04 => Reg::H,
+            0x05 => Reg::L,
+            _ => panic!(
+                "Byte value does not match any known register: 0x{:x}",
+                value
+            ),
+        }
+    }
+}
+
 enum ArithmeticTarget {
     Register(Reg),
     HL,
@@ -230,14 +250,62 @@ enum Instruction {
     SWAP,
 }
 
+impl Instruction {
+    fn from_byte<I>(opcode: u8, bytes: &mut I) -> Option<Instruction>
+    where
+        I: Iterator<Item = (u16, u8)>,
+    {
+        if (opcode & 0xF8) == 0x80 {
+            Some(Instruction::ADD(ArithmeticTarget::Register(
+                Reg::from_byte(opcode & 0x07),
+            )))
+        } else if opcode == 0xC6 {
+            if let Some((_addr, n)) = bytes.next() {
+                Some(Instruction::ADD(ArithmeticTarget::Immediate(n)))
+            } else {
+                panic!("Bus overrun whilst reading 0x{:x}", opcode);
+            }
+        } else if opcode == 0x8E {
+            Some(Instruction::ADD(ArithmeticTarget::HL))
+        } else {
+            None
+        }
+    }
+}
+
+struct MemoryLocation {
+    cursor: u16,
+    memory: Rc<[u8]>,
+}
+
+impl MemoryLocation {
+    fn new(start_addr: u16, memory: Rc<[u8]>) -> MemoryLocation {
+        MemoryLocation {
+            cursor: start_addr,
+            memory,
+        }
+    }
+}
+
+impl Iterator for MemoryLocation {
+    type Item = (u16, u8);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = (self.cursor, self.memory[self.cursor as usize]);
+        self.cursor = self.cursor.wrapping_add(1);
+
+        Some(result)
+    }
+}
+
 struct MemoryBus {
-    memory: [u8; 65_536],
+    memory: Rc<[u8]>,
 }
 
 impl MemoryBus {
     fn new() -> MemoryBus {
         MemoryBus {
-            memory: [0; 65_536],
+            memory: Rc::new([0; 65_536]),
         }
     }
 
@@ -245,8 +313,16 @@ impl MemoryBus {
         self.memory[address as usize]
     }
 
+    fn read_bytes_from(&self, address: u16) -> MemoryLocation {
+        MemoryLocation::new(address, Rc::clone(&self.memory))
+    }
+
     fn write_byte(&mut self, address: u16, value: u8) -> &mut Self {
-        self.memory[address as usize] = value;
+        if let Some(mem) = Rc::get_mut(&mut self.memory) {
+            mem[address as usize] = value;
+        } else {
+            panic!("Cannot mutably write whilst borrowed at 0x{:x}", address);
+        }
 
         self
     }
@@ -267,7 +343,25 @@ impl CPU {
         }
     }
 
-    pub fn execute(&mut self, instruction: Instruction) -> &mut Self {
+    pub fn step(&mut self) {
+        let instruction_byte = self.bus.read_byte(self.pc);
+        let mut more_bytes = self
+            .bus
+            .read_bytes_from(self.pc.wrapping_add(1))
+            .into_iter();
+
+        if let Some(instruction) = Instruction::from_byte(instruction_byte, &mut more_bytes) {
+            if let Some(new_pointer) = self.execute(instruction) {
+                self.pc = new_pointer;
+            } else {
+                self.pc = more_bytes.cursor;
+            }
+        } else {
+            panic!("Unknown instruction found for 0x{:x}", instruction_byte);
+        }
+    }
+
+    fn execute(&mut self, instruction: Instruction) -> Option<u16> {
         match instruction {
             Instruction::ADD(target) => match target {
                 /* ----------------------------------- ADD ----------------------------- */
@@ -364,7 +458,7 @@ impl CPU {
             _ => { /* TODO */ }
         };
 
-        self
+        None
     }
 
     fn add(&mut self, value: u8) -> &mut Self {
@@ -579,5 +673,18 @@ mod tests {
         cpu.execute(Instruction::LD(LoadTarget::A2HLD));
         assert_eq!(cpu.bus.read_byte(addr), 0x05);
         assert_eq!(cpu.registers.get_hl(), 0x3FFF);
+    }
+
+    #[test]
+    fn test_step_add() {
+        let mut cpu = CPU::new();
+        cpu.bus.write_byte(0x00, 0xC6);
+        cpu.bus.write_byte(0x01, 0xFF);
+        cpu.pc = 0x00;
+
+        cpu.step();
+
+        assert_eq!(cpu.registers.a, 0xFF);
+        assert_eq!(cpu.pc, 0x02);
     }
 }
