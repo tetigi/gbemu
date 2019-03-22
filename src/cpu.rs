@@ -255,20 +255,69 @@ impl Instruction {
     where
         I: Iterator<Item = (u16, u8)>,
     {
-        if (opcode & 0xF8) == 0x80 {
-            Some(Instruction::ADD(ArithmeticTarget::Register(
-                Reg::from_byte(opcode & 0x07),
-            )))
-        } else if opcode == 0xC6 {
-            if let Some((_addr, n)) = bytes.next() {
-                Some(Instruction::ADD(ArithmeticTarget::Immediate(n)))
-            } else {
-                panic!("Bus overrun whilst reading 0x{:x}", opcode);
+        match opcode {
+            0x87 | 0x80 | 0x81 | 0x82 | 0x83 | 0x84 | 0x85 => Some(Instruction::ADD(
+                ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
+            )),
+            0x86 => Some(Instruction::ADD(ArithmeticTarget::HL)),
+            0xC6 => {
+                if let Some((_addr, n)) = bytes.next() {
+                    Some(Instruction::ADD(ArithmeticTarget::Immediate(n)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
             }
-        } else if opcode == 0x8E {
-            Some(Instruction::ADD(ArithmeticTarget::HL))
-        } else {
-            None
+            0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E => {
+                let r = Reg::from_byte((opcode & 0x38) >> 3);
+                if let Some((_addr, n)) = bytes.next() {
+                    Some(Instruction::LD(LoadTarget::Immediate2Reg(r, n)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0x7F | 0x78 | 0x79 | 0x7A | 0x7B | 0x7C | 0x7D => {
+                let r1 = Reg::A;
+                let r2 = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
+            }
+            0x40 | 0x41 | 0x42 | 0x43 | 0x44 | 0x45 => {
+                let r1 = Reg::B;
+                let r2 = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
+            }
+            0x48 | 0x49 | 0x4A | 0x4B | 0x4C | 0x4D => {
+                let r1 = Reg::C;
+                let r2 = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
+            }
+            0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 => {
+                let r1 = Reg::D;
+                let r2 = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
+            }
+            0x58 | 0x59 | 0x5A | 0x5B | 0x5C | 0x5D => {
+                let r1 = Reg::E;
+                let r2 = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
+            }
+            0x60 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65 => {
+                let r1 = Reg::H;
+                let r2 = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
+            }
+            0x68 | 0x69 | 0x6A | 0x6B | 0x6C | 0x6D => {
+                let r1 = Reg::L;
+                let r2 = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
+            }
+            _ => None,
         }
     }
 }
