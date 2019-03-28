@@ -257,6 +257,61 @@ impl RegPairQQ {
     }
 }
 
+struct MemoryLocation {
+    cursor: u16,
+    memory: Rc<[u8]>,
+}
+
+impl MemoryLocation {
+    fn new(start_addr: u16, memory: Rc<[u8]>) -> MemoryLocation {
+        MemoryLocation {
+            cursor: start_addr,
+            memory,
+        }
+    }
+}
+
+impl Iterator for MemoryLocation {
+    type Item = (u16, u8);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = (self.cursor, self.memory[self.cursor as usize]);
+        self.cursor = self.cursor.wrapping_add(1);
+
+        Some(result)
+    }
+}
+
+struct MemoryBus {
+    memory: Rc<[u8]>,
+}
+
+impl MemoryBus {
+    fn new() -> MemoryBus {
+        MemoryBus {
+            memory: Rc::new([0; 65_536]),
+        }
+    }
+
+    fn read_byte(&self, address: u16) -> u8 {
+        self.memory[address as usize]
+    }
+
+    fn read_bytes_from(&self, address: u16) -> MemoryLocation {
+        MemoryLocation::new(address, Rc::clone(&self.memory))
+    }
+
+    fn write_byte(&mut self, address: u16, value: u8) -> &mut Self {
+        if let Some(mem) = Rc::get_mut(&mut self.memory) {
+            mem[address as usize] = value;
+        } else {
+            panic!("Cannot mutably write whilst borrowed at 0x{:x}", address);
+        }
+
+        self
+    }
+}
+
 enum ArithmeticTarget {
     Register(Reg),
     HL,
@@ -300,7 +355,7 @@ enum Instruction {
     LD(LoadTarget),
     PUSH(RegPairQQ),
     POP(RegPairQQ),
-    LDHL,
+    LDHL(u8),
     DEC,
     RLCA,
     RLA,
@@ -471,61 +526,6 @@ impl Instruction {
     }
 }
 
-struct MemoryLocation {
-    cursor: u16,
-    memory: Rc<[u8]>,
-}
-
-impl MemoryLocation {
-    fn new(start_addr: u16, memory: Rc<[u8]>) -> MemoryLocation {
-        MemoryLocation {
-            cursor: start_addr,
-            memory,
-        }
-    }
-}
-
-impl Iterator for MemoryLocation {
-    type Item = (u16, u8);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = (self.cursor, self.memory[self.cursor as usize]);
-        self.cursor = self.cursor.wrapping_add(1);
-
-        Some(result)
-    }
-}
-
-struct MemoryBus {
-    memory: Rc<[u8]>,
-}
-
-impl MemoryBus {
-    fn new() -> MemoryBus {
-        MemoryBus {
-            memory: Rc::new([0; 65_536]),
-        }
-    }
-
-    fn read_byte(&self, address: u16) -> u8 {
-        self.memory[address as usize]
-    }
-
-    fn read_bytes_from(&self, address: u16) -> MemoryLocation {
-        MemoryLocation::new(address, Rc::clone(&self.memory))
-    }
-
-    fn write_byte(&mut self, address: u16, value: u8) -> &mut Self {
-        if let Some(mem) = Rc::get_mut(&mut self.memory) {
-            mem[address as usize] = value;
-        } else {
-            panic!("Cannot mutably write whilst borrowed at 0x{:x}", address);
-        }
-
-        self
-    }
-}
-
 struct CPU {
     registers: Registers,
     pc: u16,
@@ -689,10 +689,30 @@ impl CPU {
                 self.registers.set_pair(rs, (h as u16) << 8 | l as u16);
                 self.sp += 2;
             }
+            Instruction::LDHL(e) => {
+                let (value, _is_pos) = CPU::i_to_u16(e);
+                let (new_value, did_overflow) = self.sp.overflowing_add(value);
+
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.carry = did_overflow;
+                self.registers.f.half_carry = (self.sp & 0xFFF) + (value & 0xFFF) > 0xFFF;
+
+                self.registers.set_hl(new_value);
+            }
             _ => { /* TODO */ }
         };
 
         None
+    }
+
+    fn i_to_u16(e: u8) -> (u16, bool) {
+        let is_pos = e & 0x80 == 0x0;
+        if is_pos {
+            (e as u16, true)
+        } else {
+            (!((!e + 1) as u16) + 1, false)
+        }
     }
 
     fn add(&mut self, value: u8) -> &mut Self {
@@ -920,5 +940,52 @@ mod tests {
 
         assert_eq!(cpu.registers.a, 0xFF);
         assert_eq!(cpu.pc, 0x02);
+    }
+
+    #[test]
+    fn test_ldhl() {
+        let mut cpu = CPU::new();
+        cpu.sp = 0xFFF8;
+        cpu.execute(Instruction::LDHL(2));
+        assert_eq!(cpu.registers.get_hl(), 0xFFFA);
+        let expected_flags = FlagsRegister::new();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_ldhl_overflow() {
+        let mut cpu = CPU::new();
+        cpu.sp = 0xFFF8;
+        cpu.execute(Instruction::LDHL(9));
+        assert_eq!(cpu.registers.get_hl(), 0x0001);
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry().set_half_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_ldhl_half_overflow() {
+        let mut cpu = CPU::new();
+        cpu.sp = 0x0FFF;
+        cpu.execute(Instruction::LDHL(1));
+        assert_eq!(cpu.registers.get_hl(), 0x1000);
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_half_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_ldhl_subtract() {
+        let mut cpu = CPU::new();
+        cpu.sp = 0x0FFF;
+        cpu.execute(Instruction::LDHL(0b11111111));
+        assert_eq!(cpu.registers.get_hl(), 0x0FFE);
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_half_carry().set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
     }
 }
