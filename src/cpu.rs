@@ -163,6 +163,26 @@ impl Registers {
 
         self
     }
+
+    pub fn set_pair(&mut self, rs: RegPairQQ, value: u16) -> &mut Self {
+        match rs {
+            RegPairQQ::BC => self.set_bc(value),
+            RegPairQQ::DE => self.set_de(value),
+            RegPairQQ::HL => self.set_hl(value),
+            RegPairQQ::AF => self.set_af(value),
+        };
+
+        self
+    }
+
+    pub fn get_pair(&self, rs: &RegPairQQ) -> u16 {
+        match rs {
+            RegPairQQ::BC => self.get_bc(),
+            RegPairQQ::DE => self.get_de(),
+            RegPairQQ::HL => self.get_hl(),
+            RegPairQQ::AF => self.get_af(),
+        }
+    }
 }
 
 enum Reg {
@@ -193,20 +213,42 @@ impl Reg {
     }
 }
 
-enum RegPair {
+enum RegPairDD {
     BC,
     DE,
     HL,
     SP,
 }
 
-impl RegPair {
-    fn from_byte(value: u8) -> RegPair {
+impl RegPairDD {
+    fn from_byte(value: u8) -> RegPairDD {
         match value {
-            0x00 => RegPair::BC,
-            0x01 => RegPair::DE,
-            0x02 => RegPair::HL,
-            0x03 => RegPair::SP,
+            0x00 => RegPairDD::BC,
+            0x01 => RegPairDD::DE,
+            0x02 => RegPairDD::HL,
+            0x03 => RegPairDD::SP,
+            _ => panic!(
+                "Byte value does not match any known register pair: 0x{:x}",
+                value
+            ),
+        }
+    }
+}
+
+enum RegPairQQ {
+    BC,
+    DE,
+    HL,
+    AF,
+}
+
+impl RegPairQQ {
+    fn from_byte(value: u8) -> RegPairQQ {
+        match value {
+            0x00 => RegPairQQ::BC,
+            0x01 => RegPairQQ::DE,
+            0x02 => RegPairQQ::HL,
+            0x03 => RegPairQQ::AF,
             _ => panic!(
                 "Byte value does not match any known register pair: 0x{:x}",
                 value
@@ -241,7 +283,7 @@ enum LoadTarget {
     A2HLD,
     A2BC,
     A2DE,
-    BigImmediate2Regs(RegPair, u16),
+    BigImmediate2Regs(RegPairDD, u16),
     HL2SP,
 }
 
@@ -256,8 +298,8 @@ enum Instruction {
     CP,
     INC,
     LD(LoadTarget),
-    PUSH,
-    POP,
+    PUSH(RegPairQQ),
+    POP(RegPairQQ),
     LDHL,
     DEC,
     RLCA,
@@ -408,7 +450,7 @@ impl Instruction {
                 let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
 
                 if ns.len() == 2 {
-                    let rs = RegPair::from_byte((opcode >> 4) & 0x03);
+                    let rs = RegPairDD::from_byte((opcode >> 4) & 0x03);
                     Some(Instruction::LD(LoadTarget::BigImmediate2Regs(
                         rs,
                         (ns[0] as u16) << 8 | ns[1] as u16,
@@ -418,6 +460,12 @@ impl Instruction {
                 }
             }
             0xF9 => Some(Instruction::LD(LoadTarget::HL2SP)),
+            0xC5 | 0xD5 | 0xE5 | 0xF5 => Some(Instruction::PUSH(RegPairQQ::from_byte(
+                (opcode >> 4) & 0x03,
+            ))),
+            0xC1 | 0xD1 | 0xE1 | 0xF1 => {
+                Some(Instruction::POP(RegPairQQ::from_byte((opcode >> 4) & 0x03)))
+            }
             _ => None,
         }
     }
@@ -608,16 +656,16 @@ impl CPU {
                 }
                 LoadTarget::BigImmediate2Regs(rs, n) => {
                     match rs {
-                        RegPair::BC => {
+                        RegPairDD::BC => {
                             self.registers.set_bc(n);
                         }
-                        RegPair::DE => {
+                        RegPairDD::DE => {
                             self.registers.set_de(n);
                         }
-                        RegPair::HL => {
+                        RegPairDD::HL => {
                             self.registers.set_hl(n);
                         }
-                        RegPair::SP => self.sp = n,
+                        RegPairDD::SP => self.sp = n,
                     };
                 }
                 LoadTarget::HL2SP => {
@@ -625,6 +673,24 @@ impl CPU {
                     self.sp = hl;
                 }
             },
+            Instruction::PUSH(rs) => {
+                let value = self.registers.get_pair(&rs);
+                let h = ((value & 0xFF00) >> 8) as u8;
+                let l = (value & 0x00FF) as u8;
+
+                self.bus.write_byte(self.sp - 1, h);
+                self.bus.write_byte(self.sp - 2, l);
+                self.sp -= 2;
+            }
+            Instruction::POP(rs) => {
+                let value = self.registers.get_pair(&rs);
+
+                let l = self.bus.read_byte(self.sp);
+                let h = self.bus.read_byte(self.sp + 1);
+
+                self.registers.set_pair(rs, (h as u16) << 8 | l as u16);
+                self.sp += 2;
+            }
             _ => { /* TODO */ }
         };
 
