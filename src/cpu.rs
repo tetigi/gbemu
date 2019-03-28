@@ -175,6 +175,22 @@ enum Reg {
     L,
 }
 
+enum RegPair {
+    AC,
+    DE,
+    HL,
+}
+
+impl RegPair {
+    pub fn into_regs(self) -> (Reg, Reg) {
+        match self {
+            RegPair::AC => (Reg::A, Reg::C),
+            RegPair::DE => (Reg::D, Reg::E),
+            RegPair::HL => (Reg::H, Reg::L),
+        }
+    }
+}
+
 impl Reg {
     fn from_byte(value: u8) -> Reg {
         match value {
@@ -317,6 +333,65 @@ impl Instruction {
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
+            0x7E | 0x46 | 0x4E | 0x56 | 0x5E | 0x66 | 0x6E => {
+                let r = Reg::from_byte((opcode & 0x38) >> 3);
+
+                Some(Instruction::LD(LoadTarget::HL2Reg(r)))
+            }
+            0x70 | 0x71 | 0x72 | 0x73 | 0x74 | 0x75 => {
+                let r = Reg::from_byte(opcode & 0x07);
+
+                Some(Instruction::LD(LoadTarget::Reg2HL(r)))
+            }
+            0x36 => {
+                if let Some((_addr, n)) = bytes.next() {
+                    Some(Instruction::LD(LoadTarget::Immediate2HL(n)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0x0A => Some(Instruction::LD(LoadTarget::BC2A)),
+            0x1A => Some(Instruction::LD(LoadTarget::DE2A)),
+            0xF0 => {
+                if let Some((_addr, n)) = bytes.next() {
+                    Some(Instruction::LD(LoadTarget::ImmediateRAM2A(n)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0xE0 => {
+                if let Some((_addr, n)) = bytes.next() {
+                    Some(Instruction::LD(LoadTarget::A2ImmediateRAM(n)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0xFA => {
+                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
+
+                if ns.len() == 2 {
+                    Some(Instruction::LD(LoadTarget::BigImmediateRAM2A((ns[0] as u16) << 8 | ns[1] as u16)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0xEA => {
+                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
+
+                if ns.len() == 2 {
+                    Some(Instruction::LD(LoadTarget::A2BigImmediateRAM((ns[0] as u16) << 8 | ns[1] as u16)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0xF2 => Some(Instruction::LD(LoadTarget::CRAM2A)),
+            0xE2 => Some(Instruction::LD(LoadTarget::A2CRAM)),
+            0x2A => Some(Instruction::LD(LoadTarget::A2HLI)),
+            0x3A => Some(Instruction::LD(LoadTarget::A2HLD)),
+            0x02 => Some(Instruction::LD(LoadTarget::A2BC)),
+            0x12 => Some(Instruction::LD(LoadTarget::A2DE)),
+            0x22 => Some(Instruction::LD(LoadTarget::A2HLI)),
+            0x32 => Some(Instruction::LD(LoadTarget::A2HLD)),
             _ => None,
         }
     }
