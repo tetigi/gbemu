@@ -683,8 +683,6 @@ impl CPU {
                 self.sp -= 2;
             }
             Instruction::POP(rs) => {
-                let value = self.registers.get_pair(&rs);
-
                 let l = self.bus.read_byte(self.sp);
                 let h = self.bus.read_byte(self.sp + 1);
 
