@@ -175,22 +175,6 @@ enum Reg {
     L,
 }
 
-enum RegPair {
-    AC,
-    DE,
-    HL,
-}
-
-impl RegPair {
-    pub fn into_regs(self) -> (Reg, Reg) {
-        match self {
-            RegPair::AC => (Reg::A, Reg::C),
-            RegPair::DE => (Reg::D, Reg::E),
-            RegPair::HL => (Reg::H, Reg::L),
-        }
-    }
-}
-
 impl Reg {
     fn from_byte(value: u8) -> Reg {
         match value {
@@ -203,6 +187,28 @@ impl Reg {
             0x05 => Reg::L,
             _ => panic!(
                 "Byte value does not match any known register: 0x{:x}",
+                value
+            ),
+        }
+    }
+}
+
+enum RegPair {
+    BC,
+    DE,
+    HL,
+    SP,
+}
+
+impl RegPair {
+    fn from_byte(value: u8) -> RegPair {
+        match value {
+            0x00 => RegPair::BC,
+            0x01 => RegPair::DE,
+            0x02 => RegPair::HL,
+            0x03 => RegPair::SP,
+            _ => panic!(
+                "Byte value does not match any known register pair: 0x{:x}",
                 value
             ),
         }
@@ -235,6 +241,8 @@ enum LoadTarget {
     A2HLD,
     A2BC,
     A2DE,
+    BigImmediate2Regs(RegPair, u16),
+    HL2SP,
 }
 
 enum Instruction {
@@ -370,7 +378,9 @@ impl Instruction {
                 let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
 
                 if ns.len() == 2 {
-                    Some(Instruction::LD(LoadTarget::BigImmediateRAM2A((ns[0] as u16) << 8 | ns[1] as u16)))
+                    Some(Instruction::LD(LoadTarget::BigImmediateRAM2A(
+                        (ns[0] as u16) << 8 | ns[1] as u16,
+                    )))
                 } else {
                     panic!("Bus overrun whilst reading 0x{:x}", opcode);
                 }
@@ -379,7 +389,9 @@ impl Instruction {
                 let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
 
                 if ns.len() == 2 {
-                    Some(Instruction::LD(LoadTarget::A2BigImmediateRAM((ns[0] as u16) << 8 | ns[1] as u16)))
+                    Some(Instruction::LD(LoadTarget::A2BigImmediateRAM(
+                        (ns[0] as u16) << 8 | ns[1] as u16,
+                    )))
                 } else {
                     panic!("Bus overrun whilst reading 0x{:x}", opcode);
                 }
@@ -392,6 +404,20 @@ impl Instruction {
             0x12 => Some(Instruction::LD(LoadTarget::A2DE)),
             0x22 => Some(Instruction::LD(LoadTarget::A2HLI)),
             0x32 => Some(Instruction::LD(LoadTarget::A2HLD)),
+            0x01 | 0x11 | 0x21 | 0x31 => {
+                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
+
+                if ns.len() == 2 {
+                    let rs = RegPair::from_byte((opcode >> 4) & 0x03);
+                    Some(Instruction::LD(LoadTarget::BigImmediate2Regs(
+                        rs,
+                        (ns[0] as u16) << 8 | ns[1] as u16,
+                    )))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0xF9 => Some(Instruction::LD(LoadTarget::HL2SP)),
             _ => None,
         }
     }
@@ -455,6 +481,7 @@ impl MemoryBus {
 struct CPU {
     registers: Registers,
     pc: u16,
+    sp: u16,
     bus: MemoryBus,
 }
 
@@ -463,6 +490,7 @@ impl CPU {
         CPU {
             registers: Registers::new(),
             pc: 0x100,
+            sp: 0xFFFE,
             bus: MemoryBus::new(),
         }
     }
@@ -577,6 +605,24 @@ impl CPU {
                     self.bus.write_byte(addr, value);
                     let (new_hl, _) = addr.overflowing_sub(1);
                     self.registers.set_hl(new_hl);
+                }
+                LoadTarget::BigImmediate2Regs(rs, n) => {
+                    match rs {
+                        RegPair::BC => {
+                            self.registers.set_bc(n);
+                        }
+                        RegPair::DE => {
+                            self.registers.set_de(n);
+                        }
+                        RegPair::HL => {
+                            self.registers.set_hl(n);
+                        }
+                        RegPair::SP => self.sp = n,
+                    };
+                }
+                LoadTarget::HL2SP => {
+                    let hl = self.registers.get_hl();
+                    self.sp = hl;
                 }
             },
             _ => { /* TODO */ }
