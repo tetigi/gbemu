@@ -340,11 +340,12 @@ enum LoadTarget {
     A2DE,
     BigImmediate2Regs(RegPairDD, u16),
     HL2SP,
+    SP2RAM(u16),
 }
 
 enum Instruction {
     ADD(ArithmeticTarget),
-    ADC,
+    ADC(ArithmeticTarget),
     SUB,
     SBC,
     AND,
@@ -384,6 +385,17 @@ impl Instruction {
             0xC6 => {
                 if let Some((_addr, n)) = bytes.next() {
                     Some(Instruction::ADD(ArithmeticTarget::Immediate(n)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0x8F | 0x88 | 0x89 | 0x8A | 0x8B | 0x8C | 0x8D => Some(Instruction::ADC(
+                ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
+            )),
+            0x8E => Some(Instruction::ADC(ArithmeticTarget::HL)),
+            0xCE => {
+                if let Some((_addr, n)) = bytes.next() {
+                    Some(Instruction::ADC(ArithmeticTarget::Immediate(n)))
                 } else {
                     panic!("Bus overrun whilst reading 0x{:x}", opcode);
                 }
@@ -521,6 +533,17 @@ impl Instruction {
             0xC1 | 0xD1 | 0xE1 | 0xF1 => {
                 Some(Instruction::POP(RegPairQQ::from_byte((opcode >> 4) & 0x03)))
             }
+            0x08 => {
+                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
+
+                if ns.len() == 2 {
+                    Some(Instruction::LD(LoadTarget::SP2RAM(
+                        (ns[0] as u16) << 8 | ns[1] as u16,
+                    )))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
             _ => None,
         }
     }
@@ -564,20 +587,33 @@ impl CPU {
     fn execute(&mut self, instruction: Instruction) -> Option<u16> {
         match instruction {
             Instruction::ADD(target) => match target {
-                /* ----------------------------------- ADD ----------------------------- */
                 ArithmeticTarget::Register(r) => {
                     let value = self.registers.get_reg(r);
                     self.add(value);
                 }
                 ArithmeticTarget::HL => {
-                    let value = self.registers.get_hl();
-                    self.add((value & 0x00FF) as u8);
+                    let addr = self.registers.get_hl();
+                    let value = self.bus.read_byte(addr);
+                    self.add(value);
                 }
                 ArithmeticTarget::Immediate(n) => {
                     self.add(n);
                 }
             },
-            /* ----------------------------------- LOAD ----------------------------- */
+            Instruction::ADC(target) => match target {
+                ArithmeticTarget::Register(r) => {
+                    let value = self.registers.get_reg(r);
+                    self.adc(value);
+                }
+                ArithmeticTarget::HL => {
+                    let addr = self.registers.get_hl();
+                    let value = self.bus.read_byte(addr);
+                    self.adc(value);
+                }
+                ArithmeticTarget::Immediate(n) => {
+                    self.adc(n);
+                }
+            },
             Instruction::LD(target) => match target {
                 LoadTarget::Reg2Reg(r1, r2) => {
                     let value = self.registers.get_reg(r2);
@@ -672,6 +708,13 @@ impl CPU {
                     let hl = self.registers.get_hl();
                     self.sp = hl;
                 }
+                LoadTarget::SP2RAM(nn) => {
+                    let value = self.sp;
+                    let h = ((value & 0xFF00) >> 8) as u8;
+                    let l = (value & 0x00FF) as u8;
+                    self.bus.write_byte(nn, l);
+                    self.bus.write_byte(nn + 1, h);
+                }
             },
             Instruction::PUSH(rs) => {
                 let value = self.registers.get_pair(&rs);
@@ -725,6 +768,20 @@ impl CPU {
         self.registers.a = new_value;
         self
     }
+
+    fn adc(&mut self, value: u8) -> &mut Self {
+        let (tmp, did_overflow1) = self.registers.a.overflowing_add(value);
+        let (new_value, did_overflow2) = tmp.overflowing_add(1);
+        let did_overflow = did_overflow1 || did_overflow2;
+
+        self.registers.f.zero = new_value == 0;
+        self.registers.f.subtract = false;
+        self.registers.f.carry = did_overflow;
+        self.registers.f.half_carry = (self.registers.a & 0xF) + (value & 0xF) + 1 > 0xF;
+
+        self.registers.a = new_value;
+        self
+    }
 }
 
 #[cfg(test)]
@@ -768,13 +825,67 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.registers.a = 0x3C;
         cpu.registers.h = 0x0;
-        cpu.registers.l = 0x12;
+        cpu.registers.l = 0x0;
+        cpu.bus.write_byte(0x0000, 0x12);
 
         cpu.execute(Instruction::ADD(ArithmeticTarget::HL));
 
         assert_eq!(cpu.registers.a, 0x4E);
 
         let expected_flags = FlagsRegister::new();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_adc_register_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0xE1;
+        cpu.registers.e = 0x0F;
+        cpu.registers.f.set_carry();
+
+        cpu.execute(Instruction::ADC(ArithmeticTarget::Register(Reg::E)));
+
+        assert_eq!(cpu.registers.a, 0xF1);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_half_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_adc_register_immediate() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0xE1;
+        cpu.registers.f.set_carry();
+        let n = 0x3B;
+
+        cpu.execute(Instruction::ADC(ArithmeticTarget::Immediate(n)));
+
+        assert_eq!(cpu.registers.a, 0x1D);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_adc_register_hl() {
+        let mut cpu = CPU::new();
+        cpu.registers.f.set_carry();
+        cpu.registers.a = 0xE1;
+        cpu.registers.h = 0x0;
+        cpu.registers.l = 0x1;
+        cpu.bus.write_byte(0x0001, 0x1E);
+
+        cpu.execute(Instruction::ADC(ArithmeticTarget::HL));
+
+        assert_eq!(cpu.registers.a, 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_zero().set_half_carry().set_carry();
 
         assert_eq!(cpu.registers.f, expected_flags);
     }
