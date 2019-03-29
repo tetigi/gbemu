@@ -869,6 +869,9 @@ impl CPU {
 
         self.registers.f.zero = new_value == 0;
         self.registers.f.subtract = false;
+
+        // TODO not sure if this did_overflow OR is always correct.
+        // Don't have any other values to check it with though.
         self.registers.f.half_carry = did_overflow || (current_value & 0xF) + 1 > 0xF;
 
         new_value
