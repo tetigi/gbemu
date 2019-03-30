@@ -377,6 +377,23 @@ enum Instruction {
     SRA(RotateShiftTarget),
     SRL(RotateShiftTarget),
     SWAP(RotateShiftTarget),
+    BIT,
+    SET,
+    RES,
+    JP,
+    JR,
+    CALL,
+    RET,
+    RETI,
+    RST,
+    DAA,
+    CPL,
+    NOP,
+    CCF,
+    SCF,
+    EI,
+    HALT,
+    STOP,
 }
 
 impl Instruction {
