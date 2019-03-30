@@ -955,6 +955,7 @@ impl CPU {
             Instruction::SRA(target) => self.do_rotation(target, &mut CPU::shift_right),
             Instruction::SRL(target) => self.do_rotation(target, &mut CPU::shift_right_lossy),
             Instruction::SWAP(target) => self.do_rotation(target, &mut CPU::swap),
+            _ => { /* TODO */ }
         };
 
         None
