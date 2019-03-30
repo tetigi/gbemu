@@ -164,23 +164,25 @@ impl Registers {
         self
     }
 
-    pub fn set_pair(&mut self, rs: RegPairQQ, value: u16) -> &mut Self {
+    pub fn set_pair(&mut self, rs: RegPair, value: u16) -> &mut Self {
         match rs {
-            RegPairQQ::BC => self.set_bc(value),
-            RegPairQQ::DE => self.set_de(value),
-            RegPairQQ::HL => self.set_hl(value),
-            RegPairQQ::AF => self.set_af(value),
+            RegPair::BC => self.set_bc(value),
+            RegPair::DE => self.set_de(value),
+            RegPair::HL => self.set_hl(value),
+            RegPair::AF => self.set_af(value),
+            RegPair::SP => panic!("Cannot set SP as register pair!"),
         };
 
         self
     }
 
-    pub fn get_pair(&self, rs: &RegPairQQ) -> u16 {
+    pub fn get_pair(&self, rs: &RegPair) -> u16 {
         match rs {
-            RegPairQQ::BC => self.get_bc(),
-            RegPairQQ::DE => self.get_de(),
-            RegPairQQ::HL => self.get_hl(),
-            RegPairQQ::AF => self.get_af(),
+            RegPair::BC => self.get_bc(),
+            RegPair::DE => self.get_de(),
+            RegPair::HL => self.get_hl(),
+            RegPair::AF => self.get_af(),
+            RegPair::SP => panic!("Cannot set SP as register pair!"),
         }
     }
 }
@@ -213,42 +215,34 @@ impl Reg {
     }
 }
 
-enum RegPairDD {
+enum RegPair {
     BC,
     DE,
     HL,
+    AF,
     SP,
 }
 
-impl RegPairDD {
-    fn from_byte(value: u8) -> RegPairDD {
+impl RegPair {
+    fn from_byte_qq(value: u8) -> RegPair {
         match value {
-            0x00 => RegPairDD::BC,
-            0x01 => RegPairDD::DE,
-            0x02 => RegPairDD::HL,
-            0x03 => RegPairDD::SP,
+            0x00 => RegPair::BC,
+            0x01 => RegPair::DE,
+            0x02 => RegPair::HL,
+            0x03 => RegPair::AF,
             _ => panic!(
                 "Byte value does not match any known register pair: 0x{:x}",
                 value
             ),
         }
     }
-}
 
-enum RegPairQQ {
-    BC,
-    DE,
-    HL,
-    AF,
-}
-
-impl RegPairQQ {
-    fn from_byte(value: u8) -> RegPairQQ {
+    fn from_byte_dd(value: u8) -> RegPair {
         match value {
-            0x00 => RegPairQQ::BC,
-            0x01 => RegPairQQ::DE,
-            0x02 => RegPairQQ::HL,
-            0x03 => RegPairQQ::AF,
+            0x00 => RegPair::BC,
+            0x01 => RegPair::DE,
+            0x02 => RegPair::HL,
+            0x03 => RegPair::SP,
             _ => panic!(
                 "Byte value does not match any known register pair: 0x{:x}",
                 value
@@ -318,6 +312,11 @@ enum ArithmeticTarget {
     Immediate(u8),
 }
 
+enum BigArithmeticTarget {
+    Registers(RegPair),
+    Operand(u8),
+}
+
 enum LoadTarget {
     Reg2Reg(Reg, Reg),
     Immediate2Reg(Reg, u8),
@@ -338,7 +337,7 @@ enum LoadTarget {
     A2HLD,
     A2BC,
     A2DE,
-    BigImmediate2Regs(RegPairDD, u16),
+    BigImmediate2Regs(RegPair, u16),
     HL2SP,
     SP2RAM(u16),
 }
@@ -354,10 +353,13 @@ enum Instruction {
     CP(ArithmeticTarget),
     INC(ArithmeticTarget),
     LD(LoadTarget),
-    PUSH(RegPairQQ),
-    POP(RegPairQQ),
+    PUSH(RegPair),
+    POP(RegPair),
     LDHL(u8),
     DEC(ArithmeticTarget),
+    BIGADD(BigArithmeticTarget),
+    BIGINC(RegPair),
+    BIGDEC(RegPair),
     RLCA,
     RLA,
     RRCA,
@@ -495,7 +497,7 @@ impl Instruction {
                 let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
 
                 if ns.len() == 2 {
-                    let rs = RegPairDD::from_byte((opcode >> 4) & 0x03);
+                    let rs = RegPair::from_byte_dd((opcode >> 4) & 0x03);
                     Some(Instruction::LD(LoadTarget::BigImmediate2Regs(
                         rs,
                         (ns[0] as u16) << 8 | ns[1] as u16,
@@ -505,12 +507,12 @@ impl Instruction {
                 }
             }
             0xF9 => Some(Instruction::LD(LoadTarget::HL2SP)),
-            0xC5 | 0xD5 | 0xE5 | 0xF5 => Some(Instruction::PUSH(RegPairQQ::from_byte(
+            0xC5 | 0xD5 | 0xE5 | 0xF5 => Some(Instruction::PUSH(RegPair::from_byte_qq(
                 (opcode >> 4) & 0x03,
             ))),
-            0xC1 | 0xD1 | 0xE1 | 0xF1 => {
-                Some(Instruction::POP(RegPairQQ::from_byte((opcode >> 4) & 0x03)))
-            }
+            0xC1 | 0xD1 | 0xE1 | 0xF1 => Some(Instruction::POP(RegPair::from_byte_qq(
+                (opcode >> 4) & 0x03,
+            ))),
             0x08 => {
                 let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
 
@@ -618,6 +620,22 @@ impl Instruction {
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0x35 => Some(Instruction::DEC(ArithmeticTarget::HL)),
+            0x09 | 0x19 | 0x29 | 0x39 => Some(Instruction::BIGADD(BigArithmeticTarget::Registers(
+                RegPair::from_byte_dd((opcode >> 4) & 0x03),
+            ))),
+            0xE8 => {
+                if let Some((_addr, n)) = bytes.next() {
+                    Some(Instruction::BIGADD(BigArithmeticTarget::Operand(n)))
+                } else {
+                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
+                }
+            }
+            0x03 | 0x13 | 0x23 | 0x33 => Some(Instruction::BIGINC(RegPair::from_byte_dd(
+                (opcode >> 4) & 0x03,
+            ))),
+            0x0B | 0x1B | 0x2B | 0x3B => Some(Instruction::BIGDEC(RegPair::from_byte_dd(
+                (opcode >> 4) & 0x03,
+            ))),
             _ => None,
         }
     }
@@ -738,16 +756,17 @@ impl CPU {
                 }
                 LoadTarget::BigImmediate2Regs(rs, n) => {
                     match rs {
-                        RegPairDD::BC => {
+                        RegPair::BC => {
                             self.registers.set_bc(n);
                         }
-                        RegPairDD::DE => {
+                        RegPair::DE => {
                             self.registers.set_de(n);
                         }
-                        RegPairDD::HL => {
+                        RegPair::HL => {
                             self.registers.set_hl(n);
                         }
-                        RegPairDD::SP => self.sp = n,
+                        RegPair::SP => self.sp = n,
+                        RegPair::AF => panic!("Flag pair not suported in LD BigImmediate2Regs"),
                     };
                 }
                 LoadTarget::HL2SP => {
@@ -829,6 +848,40 @@ impl CPU {
                     panic!("Immediate arithmetic not supported for DEC")
                 }
             },
+            Instruction::BIGADD(target) => match target {
+                BigArithmeticTarget::Registers(rs) => {
+                    let value = self.registers.get_hl();
+                    let operand = self.registers.get_pair(&rs);
+
+                    let (new_value, did_overflow) = value.overflowing_add(operand);
+                    self.registers.f.subtract = false;
+                    self.registers.f.carry = did_overflow;
+                    self.registers.f.half_carry = (value & 0xFFF) + (operand & 0xFFF) > 0xFFF;
+
+                    self.registers.set_hl(new_value);
+                }
+                BigArithmeticTarget::Operand(e) => {
+                    let (value, _is_pos) = CPU::i_to_u16(e);
+                    let (new_value, did_overflow) = self.sp.overflowing_add(value);
+
+                    self.registers.f.zero = false;
+                    self.registers.f.subtract = false;
+                    self.registers.f.carry = did_overflow;
+                    self.registers.f.half_carry = (self.sp & 0xFFF) + (value & 0xFFF) > 0xFFF;
+
+                    self.sp = new_value;
+                }
+            },
+            Instruction::BIGINC(rs) => {
+                let value = self.registers.get_pair(&rs);
+                let (new_value, _) = value.overflowing_add(1);
+                self.registers.set_pair(rs, new_value);
+            }
+            Instruction::BIGDEC(rs) => {
+                let value = self.registers.get_pair(&rs);
+                let (new_value, _) = value.overflowing_sub(1);
+                self.registers.set_pair(rs, new_value);
+            }
             _ => { /* TODO */ }
         };
 
@@ -865,20 +918,18 @@ impl CPU {
     }
 
     fn inc(&mut self, current_value: u8) -> u8 {
-        let (new_value, did_overflow) = current_value.overflowing_add(1);
+        let (new_value, _did_overflow) = current_value.overflowing_add(1);
 
         self.registers.f.zero = new_value == 0;
         self.registers.f.subtract = false;
 
-        // TODO not sure if this did_overflow OR is always correct.
-        // Don't have any other values to check it with though.
         self.registers.f.half_carry = (current_value & 0xF) + 1 > 0xF;
 
         new_value
     }
 
     fn dec(&mut self, current_value: u8) -> u8 {
-        let (new_value, did_overflow) = current_value.overflowing_sub(1);
+        let (new_value, _did_overflow) = current_value.overflowing_sub(1);
 
         self.registers.f.zero = new_value == 0;
         self.registers.f.subtract = true;
@@ -1651,5 +1702,67 @@ mod tests {
         expected_flags.set_half_carry().set_subtract();
 
         assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_big_add_registers() {
+        let mut cpu = CPU::new();
+        cpu.registers.set_hl(0x8A23);
+        cpu.registers.set_bc(0x0605);
+
+        cpu.execute(Instruction::BIGADD(BigArithmeticTarget::Registers(
+            RegPair::BC,
+        )));
+
+        assert_eq!(cpu.registers.get_hl(), 0x9028);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_half_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+
+        cpu.registers.set_hl(0x8A23);
+        cpu.execute(Instruction::BIGADD(BigArithmeticTarget::Registers(
+            RegPair::HL,
+        )));
+
+        assert_eq!(cpu.registers.get_hl(), 0x1446);
+
+        expected_flags.set_carry();
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_big_add_operand() {
+        let mut cpu = CPU::new();
+        cpu.sp = 0xFFF8;
+
+        cpu.execute(Instruction::BIGADD(BigArithmeticTarget::Operand(0x2)));
+
+        assert_eq!(cpu.sp, 0xFFFA);
+
+        let expected_flags = FlagsRegister::new();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_big_inc_operand() {
+        let mut cpu = CPU::new();
+        cpu.registers.set_de(0x235F);
+
+        cpu.execute(Instruction::BIGINC(RegPair::DE));
+
+        assert_eq!(cpu.registers.get_de(), 0x2360);
+    }
+
+    #[test]
+    fn test_big_dec_operand() {
+        let mut cpu = CPU::new();
+        cpu.registers.set_de(0x235F);
+
+        cpu.execute(Instruction::BIGDEC(RegPair::DE));
+
+        assert_eq!(cpu.registers.get_de(), 0x235E);
     }
 }
