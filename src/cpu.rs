@@ -1815,7 +1815,7 @@ mod tests {
 
         cpu.execute(Instruction::RLCA);
 
-        assert_eq!(cpu.registers.a, 0x0A);
+        assert_eq!(cpu.registers.a, 0x0B);
 
         let mut expected_flags = FlagsRegister::new();
         expected_flags.set_carry();
