@@ -375,6 +375,30 @@ enum Instruction {
 }
 
 impl Instruction {
+    fn read_immediate<I>(opcode: u8, bytes: &mut I) -> u8
+    where
+        I: Iterator<Item = (u16, u8)>,
+    {
+        if let Some((_addr, n)) = bytes.next() {
+            n
+        } else {
+            panic!("Bus overrun whilst reading 0x{:x}", opcode);
+        }
+    }
+
+    fn read_big_immediate<I>(opcode: u8, bytes: &mut I) -> u16
+    where
+        I: Iterator<Item = (u16, u8)>,
+    {
+        let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
+
+        if ns.len() == 2 {
+            (ns[0] as u16) << 8 | ns[1] as u16
+        } else {
+            panic!("Bus overrun whilst reading 0x{:x}", opcode);
+        }
+    }
+
     fn from_byte<I>(opcode: u8, bytes: &mut I) -> Option<Instruction>
     where
         I: Iterator<Item = (u16, u8)>,
@@ -382,11 +406,8 @@ impl Instruction {
         match opcode {
             0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E => {
                 let r = Reg::from_byte((opcode & 0x38) >> 3);
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::LD(LoadTarget::Immediate2Reg(r, n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::LD(LoadTarget::Immediate2Reg(r, n)))
             }
             0x7F | 0x78 | 0x79 | 0x7A | 0x7B | 0x7C | 0x7D => {
                 let r1 = Reg::A;
@@ -441,49 +462,26 @@ impl Instruction {
                 Some(Instruction::LD(LoadTarget::Reg2HL(r)))
             }
             0x36 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::LD(LoadTarget::Immediate2HL(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::LD(LoadTarget::Immediate2HL(n)))
             }
             0x0A => Some(Instruction::LD(LoadTarget::BC2A)),
             0x1A => Some(Instruction::LD(LoadTarget::DE2A)),
             0xF0 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::LD(LoadTarget::ImmediateRAM2A(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::LD(LoadTarget::ImmediateRAM2A(n)))
             }
             0xE0 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::LD(LoadTarget::A2ImmediateRAM(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::LD(LoadTarget::A2ImmediateRAM(n)))
             }
             0xFA => {
-                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
-
-                if ns.len() == 2 {
-                    Some(Instruction::LD(LoadTarget::BigImmediateRAM2A(
-                        (ns[0] as u16) << 8 | ns[1] as u16,
-                    )))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let nn = Instruction::read_big_immediate(opcode, bytes);
+                Some(Instruction::LD(LoadTarget::BigImmediateRAM2A(nn)))
             }
             0xEA => {
-                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
-
-                if ns.len() == 2 {
-                    Some(Instruction::LD(LoadTarget::A2BigImmediateRAM(
-                        (ns[0] as u16) << 8 | ns[1] as u16,
-                    )))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let nn = Instruction::read_big_immediate(opcode, bytes);
+                Some(Instruction::LD(LoadTarget::A2BigImmediateRAM(nn)))
             }
             0xF2 => Some(Instruction::LD(LoadTarget::CRAM2A)),
             0xE2 => Some(Instruction::LD(LoadTarget::A2CRAM)),
@@ -494,17 +492,9 @@ impl Instruction {
             0x22 => Some(Instruction::LD(LoadTarget::A2HLI)),
             0x32 => Some(Instruction::LD(LoadTarget::A2HLD)),
             0x01 | 0x11 | 0x21 | 0x31 => {
-                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
-
-                if ns.len() == 2 {
-                    let rs = RegPair::from_byte_dd((opcode >> 4) & 0x03);
-                    Some(Instruction::LD(LoadTarget::BigImmediate2Regs(
-                        rs,
-                        (ns[0] as u16) << 8 | ns[1] as u16,
-                    )))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let nn = Instruction::read_big_immediate(opcode, bytes);
+                let rs = RegPair::from_byte_dd((opcode >> 4) & 0x03);
+                Some(Instruction::LD(LoadTarget::BigImmediate2Regs(rs, nn)))
             }
             0xF9 => Some(Instruction::LD(LoadTarget::HL2SP)),
             0xC5 | 0xD5 | 0xE5 | 0xF5 => Some(Instruction::PUSH(RegPair::from_byte_qq(
@@ -514,103 +504,72 @@ impl Instruction {
                 (opcode >> 4) & 0x03,
             ))),
             0x08 => {
-                let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
-
-                if ns.len() == 2 {
-                    Some(Instruction::LD(LoadTarget::SP2RAM(
-                        (ns[0] as u16) << 8 | ns[1] as u16,
-                    )))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let nn = Instruction::read_big_immediate(opcode, bytes);
+                Some(Instruction::LD(LoadTarget::SP2RAM(nn)))
             }
             0x87 | 0x80 | 0x81 | 0x82 | 0x83 | 0x84 | 0x85 => Some(Instruction::ADD(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0x86 => Some(Instruction::ADD(ArithmeticTarget::HL)),
             0xC6 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::ADD(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::ADD(ArithmeticTarget::Immediate(n)))
             }
             0x8F | 0x88 | 0x89 | 0x8A | 0x8B | 0x8C | 0x8D => Some(Instruction::ADC(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0x8E => Some(Instruction::ADC(ArithmeticTarget::HL)),
             0xCE => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::ADC(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::ADC(ArithmeticTarget::Immediate(n)))
             }
             0x97 | 0x90 | 0x91 | 0x92 | 0x93 | 0x94 | 0x95 => Some(Instruction::SUB(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0x96 => Some(Instruction::SUB(ArithmeticTarget::HL)),
             0xD6 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::SUB(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::SUB(ArithmeticTarget::Immediate(n)))
             }
             0x9F | 0x98 | 0x99 | 0x9A | 0x9B | 0x9C | 0x9D => Some(Instruction::SBC(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0x9E => Some(Instruction::SBC(ArithmeticTarget::HL)),
             0xDE => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::SBC(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::SBC(ArithmeticTarget::Immediate(n)))
             }
             0xA7 | 0xA0 | 0xA1 | 0xA2 | 0xA3 | 0xA4 | 0xA5 => Some(Instruction::AND(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0xA6 => Some(Instruction::AND(ArithmeticTarget::HL)),
             0xE6 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::AND(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::AND(ArithmeticTarget::Immediate(n)))
             }
             0xB7 | 0xB0 | 0xB1 | 0xB2 | 0xB3 | 0xB4 | 0xB5 => Some(Instruction::OR(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0xB6 => Some(Instruction::OR(ArithmeticTarget::HL)),
             0xF6 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::OR(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::OR(ArithmeticTarget::Immediate(n)))
             }
             0xAF | 0xA8 | 0xA9 | 0xAA | 0xAB | 0xAC | 0xAD => Some(Instruction::XOR(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0xAE => Some(Instruction::XOR(ArithmeticTarget::HL)),
             0xEE => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::XOR(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::XOR(ArithmeticTarget::Immediate(n)))
             }
             0xBF | 0xB8 | 0xB9 | 0xBA | 0xBB | 0xBC | 0xBD => Some(Instruction::CP(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
             )),
             0xBE => Some(Instruction::CP(ArithmeticTarget::HL)),
             0xFE => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::CP(ArithmeticTarget::Immediate(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::CP(ArithmeticTarget::Immediate(n)))
             }
             0x3C | 0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C => Some(Instruction::INC(
                 ArithmeticTarget::Register(Reg::from_byte(opcode & 0x07)),
@@ -624,11 +583,8 @@ impl Instruction {
                 RegPair::from_byte_dd((opcode >> 4) & 0x03),
             ))),
             0xE8 => {
-                if let Some((_addr, n)) = bytes.next() {
-                    Some(Instruction::BIGADD(BigArithmeticTarget::Operand(n)))
-                } else {
-                    panic!("Bus overrun whilst reading 0x{:x}", opcode);
-                }
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::BIGADD(BigArithmeticTarget::Operand(n)))
             }
             0x03 | 0x13 | 0x23 | 0x33 => Some(Instruction::BIGINC(RegPair::from_byte_dd(
                 (opcode >> 4) & 0x03,
