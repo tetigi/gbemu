@@ -676,12 +676,36 @@ impl CPU {
                     let addr = self.registers.get_de();
                     self.bus.write_byte(addr, value);
                 }
-                LoadTarget::CRAM2A => { /* TODO */ }
-                LoadTarget::A2CRAM => { /* TODO */ }
-                LoadTarget::ImmediateRAM2A(_value) => { /* TODO */ }
-                LoadTarget::A2ImmediateRAM(_value) => { /* TODO */ }
-                LoadTarget::BigImmediateRAM2A(_value) => { /* TODO */ }
-                LoadTarget::A2BigImmediateRAM(_value) => { /* TODO */ }
+                LoadTarget::CRAM2A => {
+                    let addr = 0xFF00 + (self.registers.c as u16);
+                    let value = self.bus.read_byte(addr);
+
+                    self.registers.a = value;
+                }
+                LoadTarget::A2CRAM => {
+                    let addr = 0xFF00 + (self.registers.c as u16);
+
+                    self.bus.write_byte(addr, self.registers.a);
+                }
+                LoadTarget::ImmediateRAM2A(addr) => {
+                    let addr = 0xFF00 + (addr as u16);
+                    let value = self.bus.read_byte(addr);
+
+                    self.registers.a = value;
+                }
+                LoadTarget::A2ImmediateRAM(addr) => {
+                    let addr = 0xFF00 + (addr as u16);
+
+                    self.bus.write_byte(addr, self.registers.a);
+                }
+                LoadTarget::BigImmediateRAM2A(addr) => {
+                    let value = self.bus.read_byte(addr);
+
+                    self.registers.a = value;
+                }
+                LoadTarget::A2BigImmediateRAM(addr) => {
+                    self.bus.write_byte(addr, self.registers.a);
+                }
                 LoadTarget::HLI2A => {
                     let addr = self.registers.get_hl();
                     let value = self.bus.read_byte(addr);
