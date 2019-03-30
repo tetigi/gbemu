@@ -322,6 +322,11 @@ enum RotateShiftTarget {
     HL,
 }
 
+enum BitTarget {
+    Register(Reg),
+    HL,
+}
+
 enum LoadTarget {
     Reg2Reg(Reg, Reg),
     Immediate2Reg(Reg, u8),
@@ -377,9 +382,9 @@ enum Instruction {
     SRA(RotateShiftTarget),
     SRL(RotateShiftTarget),
     SWAP(RotateShiftTarget),
-    BIT,
-    SET,
-    RES,
+    BIT(u8, BitTarget),
+    SET(u8, BitTarget),
+    RES(u8, BitTarget),
     JP,
     JR,
     CALL,
@@ -654,7 +659,23 @@ impl Instruction {
                         RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
                     )),
                     0x36 => Some(Instruction::SLA(RotateShiftTarget::HL)),
-                    _ => None,
+                    /* Bit shift instructions */
+                    _ => {
+                        let mini_opcode = (opcode & 0xC0) >> 6;
+                        let bit = (opcode & 0x38) >> 3;
+                        let reg_byte = opcode & 0x07;
+                        let target = if reg_byte == 0x6 {
+                            BitTarget::HL
+                        } else {
+                            BitTarget::Register(Reg::from_byte(reg_byte))
+                        };
+                        match mini_opcode {
+                            0x1 => Some(Instruction::BIT(bit, target)),
+                            0x2 => Some(Instruction::RES(bit, target)),
+                            0x3 => Some(Instruction::SET(bit, target)),
+                            _ => None,
+                        }
+                    }
                 }
             }
             _ => None,
@@ -955,6 +976,46 @@ impl CPU {
             Instruction::SRA(target) => self.do_rotation(target, &mut CPU::shift_right),
             Instruction::SRL(target) => self.do_rotation(target, &mut CPU::shift_right_lossy),
             Instruction::SWAP(target) => self.do_rotation(target, &mut CPU::swap),
+            Instruction::BIT(bit, target) => {
+                self.registers.f.half_carry = true;
+                self.registers.f.subtract = false;
+
+                let value = match target {
+                    BitTarget::Register(r) => self.registers.get_reg(&r),
+                    BitTarget::HL => {
+                        let addr = self.registers.get_hl();
+                        self.bus.read_byte(addr)
+                    }
+                };
+
+                self.registers.f.zero = ((value >> bit) & 0x1) == 0x0;
+            }
+            Instruction::RES(bit, target) => match target {
+                BitTarget::Register(r) => {
+                    let value = self.registers.get_reg(&r);
+                    let new_value = value & !((0x1 as u8) << bit);
+                    self.registers.set_reg(&r, new_value);
+                }
+                BitTarget::HL => {
+                    let addr = self.registers.get_hl();
+                    let value = self.bus.read_byte(addr);
+                    let new_value = value & !((0x1 as u8) << bit);
+                    self.bus.write_byte(addr, new_value);
+                }
+            },
+            Instruction::SET(bit, target) => match target {
+                BitTarget::Register(r) => {
+                    let value = self.registers.get_reg(&r);
+                    let new_value = value | ((0x1 as u8) << bit);
+                    self.registers.set_reg(&r, new_value);
+                }
+                BitTarget::HL => {
+                    let addr = self.registers.get_hl();
+                    let value = self.bus.read_byte(addr);
+                    let new_value = value | ((0x1 as u8) << bit);
+                    self.bus.write_byte(addr, new_value);
+                }
+            },
             _ => { /* TODO */ }
         };
 
@@ -2286,5 +2347,98 @@ mod tests {
         let expected_flags = FlagsRegister::new();
 
         assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_bit_reg() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x80;
+        cpu.registers.l = 0xEF;
+
+        cpu.execute(Instruction::BIT(0x7, BitTarget::Register(Reg::A)));
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_half_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+
+        cpu.execute(Instruction::BIT(0x4, BitTarget::Register(Reg::L)));
+        expected_flags.set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_bit_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0xFE);
+
+        cpu.execute(Instruction::BIT(0x0, BitTarget::HL));
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_half_carry().set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+
+        cpu.execute(Instruction::BIT(0x1, BitTarget::HL));
+        expected_flags.zero = false;
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_set_reg() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x80;
+        cpu.registers.l = 0x3B;
+
+        cpu.execute(Instruction::SET(0x3, BitTarget::Register(Reg::A)));
+
+        assert_eq!(cpu.registers.a, 0x88);
+
+        cpu.execute(Instruction::SET(0x7, BitTarget::Register(Reg::L)));
+
+        assert_eq!(cpu.registers.l, 0xBB);
+    }
+
+    #[test]
+    fn test_set_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0x00);
+
+        cpu.execute(Instruction::SET(0x3, BitTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0x08);
+    }
+
+    #[test]
+    fn test_res_reg() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x80;
+        cpu.registers.l = 0x3B;
+
+        cpu.execute(Instruction::RES(0x7, BitTarget::Register(Reg::A)));
+
+        assert_eq!(cpu.registers.a, 0x00);
+
+        cpu.execute(Instruction::RES(0x1, BitTarget::Register(Reg::L)));
+
+        assert_eq!(cpu.registers.l, 0x39);
+    }
+
+    #[test]
+    fn test_res_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0xFF);
+
+        cpu.execute(Instruction::RES(0x3, BitTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0xF7);
     }
 }
