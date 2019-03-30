@@ -872,7 +872,7 @@ impl CPU {
 
         // TODO not sure if this did_overflow OR is always correct.
         // Don't have any other values to check it with though.
-        self.registers.f.half_carry = did_overflow || (current_value & 0xF) + 1 > 0xF;
+        self.registers.f.half_carry = (current_value & 0xF) + 1 > 0xF;
 
         new_value
     }
@@ -882,7 +882,7 @@ impl CPU {
 
         self.registers.f.zero = new_value == 0;
         self.registers.f.subtract = true;
-        self.registers.f.half_carry = did_overflow || current_value - 1 < (self.registers.a & 0xF0);
+        self.registers.f.half_carry = (current_value & 0xF) < 1;
 
         new_value
     }
@@ -920,7 +920,7 @@ impl CPU {
         self.registers.f.zero = new_value == 0;
         self.registers.f.subtract = true;
         self.registers.f.carry = did_overflow;
-        self.registers.f.half_carry = self.registers.a - (value & 0x0F) < (self.registers.a & 0xF0);
+        self.registers.f.half_carry = (self.registers.a & 0xF) < (value & 0xF);
 
         self.registers.a = new_value;
     }
@@ -938,8 +938,7 @@ impl CPU {
         self.registers.f.zero = new_value == 0;
         self.registers.f.subtract = true;
         self.registers.f.carry = did_overflow;
-        self.registers.f.half_carry =
-            self.registers.a - (value & 0x0F) - 1 < (self.registers.a & 0xF0);
+        self.registers.f.half_carry = (self.registers.a & 0xF) < (value & 0xF) + 1;
 
         self.registers.a = new_value;
     }
