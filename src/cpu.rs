@@ -317,6 +317,11 @@ enum BigArithmeticTarget {
     Operand(u8),
 }
 
+enum RotateShiftTarget {
+    Register(Reg),
+    HL,
+}
+
 enum LoadTarget {
     Reg2Reg(Reg, Reg),
     Immediate2Reg(Reg, u8),
@@ -364,14 +369,14 @@ enum Instruction {
     RLA,
     RRCA,
     RRA,
-    RLC,
-    RL,
-    RRC,
-    RR,
-    SLA,
-    SRA,
-    SRL,
-    SWAP,
+    RLC(RotateShiftTarget),
+    RL(RotateShiftTarget),
+    RRC(RotateShiftTarget),
+    RR(RotateShiftTarget),
+    SLA(RotateShiftTarget),
+    SRA(RotateShiftTarget),
+    SRL(RotateShiftTarget),
+    SWAP(RotateShiftTarget),
 }
 
 impl Instruction {
@@ -596,6 +601,45 @@ impl Instruction {
             0x17 => Some(Instruction::RLA),
             0x0F => Some(Instruction::RRCA),
             0x1F => Some(Instruction::RRA),
+            /* Prefix Instructions */
+            0xCB => {
+                let opcode = Instruction::read_immediate(opcode, bytes);
+                match opcode {
+                    0x07 | 0x00 | 0x01 | 0x02 | 0x03 | 0x04 | 0x05 => Some(Instruction::RLC(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x06 => Some(Instruction::RLC(RotateShiftTarget::HL)),
+                    0x17 | 0x10 | 0x11 | 0x12 | 0x13 | 0x14 | 0x15 => Some(Instruction::RL(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x16 => Some(Instruction::RLC(RotateShiftTarget::HL)),
+                    0x0F | 0x08 | 0x09 | 0x0A | 0x0B | 0x0C | 0x0D => Some(Instruction::RRC(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x0E => Some(Instruction::RRC(RotateShiftTarget::HL)),
+                    0x1F | 0x18 | 0x19 | 0x1A | 0x1B | 0x1C | 0x1D => Some(Instruction::RR(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x1E => Some(Instruction::RR(RotateShiftTarget::HL)),
+                    0x27 | 0x20 | 0x21 | 0x22 | 0x23 | 0x24 | 0x25 => Some(Instruction::SLA(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x26 => Some(Instruction::SLA(RotateShiftTarget::HL)),
+                    0x2F | 0x28 | 0x29 | 0x2A | 0x2B | 0x2C | 0x2D => Some(Instruction::SRA(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x2E => Some(Instruction::SRA(RotateShiftTarget::HL)),
+                    0x3F | 0x38 | 0x39 | 0x3A | 0x3B | 0x3C | 0x3D => Some(Instruction::SRL(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x3E => Some(Instruction::SRL(RotateShiftTarget::HL)),
+                    0x37 | 0x30 | 0x31 | 0x32 | 0x33 | 0x34 | 0x35 => Some(Instruction::SWAP(
+                        RotateShiftTarget::Register(Reg::from_byte(opcode & 0x07)),
+                    )),
+                    0x36 => Some(Instruction::SLA(RotateShiftTarget::HL)),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
@@ -867,67 +911,175 @@ impl CPU {
                 self.registers.set_pair(rs, new_value);
             }
             Instruction::RLCA => {
-                let bit_7 = self.registers.a & 0x80 == 0x80;
-
+                let new_value = self.rotate_left_carry(self.registers.a);
                 self.registers.f.zero = false;
-                self.registers.f.subtract = false;
-                self.registers.f.half_carry = false;
-                self.registers.f.carry = bit_7;
-
-                if bit_7 {
-                    self.registers.a = (self.registers.a << 1) | 0x01;
-                } else {
-                    self.registers.a = self.registers.a << 1;
-                }
+                self.registers.a = new_value;
             }
             Instruction::RLA => {
-                let bit_7 = self.registers.a & 0x80 == 0x80;
-
+                let new_value = self.rotate_left(self.registers.a);
                 self.registers.f.zero = false;
-                self.registers.f.subtract = false;
-                self.registers.f.half_carry = false;
-
-                if self.registers.f.carry {
-                    self.registers.a = (self.registers.a << 1) | 0x01;
-                } else {
-                    self.registers.a = self.registers.a << 1;
-                }
-
-                self.registers.f.carry = bit_7;
+                self.registers.a = new_value;
             }
             Instruction::RRCA => {
-                let bit_0 = self.registers.a & 0x01 == 0x01;
-
+                let new_value = self.rotate_right_carry(self.registers.a);
                 self.registers.f.zero = false;
-                self.registers.f.subtract = false;
-                self.registers.f.half_carry = false;
-                self.registers.f.carry = bit_0;
-
-                if bit_0 {
-                    self.registers.a = (self.registers.a >> 1) | 0x80;
-                } else {
-                    self.registers.a = self.registers.a >> 1;
-                }
+                self.registers.a = new_value;
             }
             Instruction::RRA => {
-                let bit_0 = self.registers.a & 0x01 == 0x01;
-
+                let new_value = self.rotate_right(self.registers.a);
                 self.registers.f.zero = false;
-                self.registers.f.subtract = false;
-                self.registers.f.half_carry = false;
-
-                if self.registers.f.carry {
-                    self.registers.a = (self.registers.a >> 1) | 0x80;
-                } else {
-                    self.registers.a = self.registers.a >> 1;
-                }
-
-                self.registers.f.carry = bit_0;
+                self.registers.a = new_value;
             }
-            _ => { /* TODO */ }
+            Instruction::RLC(target) => self.do_rotation(target, &mut CPU::rotate_left_carry),
+            Instruction::RL(target) => self.do_rotation(target, &mut CPU::rotate_left),
+            Instruction::RRC(target) => self.do_rotation(target, &mut CPU::rotate_right_carry),
+            Instruction::RR(target) => self.do_rotation(target, &mut CPU::rotate_right),
+            Instruction::SLA(target) => self.do_rotation(target, &mut CPU::shift_left),
+            Instruction::SRA(target) => self.do_rotation(target, &mut CPU::shift_right),
+            Instruction::SRL(target) => self.do_rotation(target, &mut CPU::shift_right_lossy),
+            Instruction::SWAP(target) => self.do_rotation(target, &mut CPU::swap),
         };
 
         None
+    }
+
+    fn do_rotation<F>(&mut self, target: RotateShiftTarget, f: &mut F)
+    where
+        F: FnMut(&mut Self, u8) -> u8,
+    {
+        match target {
+            RotateShiftTarget::Register(r) => {
+                let value = self.registers.get_reg(&r);
+                let new_value = f(self, value);
+                self.registers.set_reg(&r, new_value);
+            }
+            RotateShiftTarget::HL => {
+                let addr = self.registers.get_hl();
+                let value = self.bus.read_byte(addr);
+                let new_value = f(self, value);
+                self.bus.write_byte(addr, new_value);
+            }
+        }
+    }
+
+    fn rotate_left_carry(&mut self, value: u8) -> u8 {
+        let bit_7 = value & 0x80 == 0x80;
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = bit_7;
+
+        let value = value.rotate_left(1);
+        self.registers.f.zero = value == 0x0;
+
+        value
+    }
+
+    fn rotate_left(&mut self, value: u8) -> u8 {
+        let bit_7 = value & 0x80 == 0x80;
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+
+        let result = if self.registers.f.carry {
+            (value << 1) | 0x01
+        } else {
+            value << 1
+        };
+
+        self.registers.f.zero = result == 0x0;
+        self.registers.f.carry = bit_7;
+
+        result
+    }
+
+    fn rotate_right_carry(&mut self, value: u8) -> u8 {
+        let bit_0 = value & 0x01 == 0x01;
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = bit_0;
+
+        let value = value.rotate_right(1);
+        self.registers.f.zero = value == 0x0;
+
+        value
+    }
+
+    fn rotate_right(&mut self, value: u8) -> u8 {
+        let bit_0 = value & 0x01 == 0x01;
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+
+        let result = if self.registers.f.carry {
+            (value >> 1) | 0x80
+        } else {
+            value >> 1
+        };
+
+        self.registers.f.zero = result == 0x0;
+        self.registers.f.carry = bit_0;
+
+        result
+    }
+
+    fn shift_left(&mut self, value: u8) -> u8 {
+        let bit_7 = value & 0x80 == 0x80;
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = bit_7;
+
+        let value = value << 1;
+
+        self.registers.f.zero = value == 0x0;
+        self.registers.f.carry = bit_7;
+        value
+    }
+
+    fn shift_right(&mut self, value: u8) -> u8 {
+        let bit_0 = value & 0x01 == 0x01;
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = bit_0;
+
+        let value = value >> 1 | (value & 0x80);
+
+        self.registers.f.zero = value == 0x0;
+        self.registers.f.carry = bit_0;
+
+        value
+    }
+
+    fn shift_right_lossy(&mut self, value: u8) -> u8 {
+        let bit_0 = value & 0x01 == 0x01;
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = bit_0;
+
+        let value = value >> 1;
+
+        self.registers.f.zero = value == 0x0;
+        self.registers.f.carry = bit_0;
+
+        value
+    }
+
+    fn swap(&mut self, value: u8) -> u8 {
+        let hl = value & 0xF0;
+        let ll = value & 0x0F;
+
+        let value = (ll << 4) | (hl >> 4);
+
+        self.registers.f.subtract = false;
+        self.registers.f.half_carry = false;
+        self.registers.f.carry = false;
+        self.registers.f.zero = value == 0x0;
+
+        value
     }
 
     fn do_arithmetic<F>(&mut self, target: ArithmeticTarget, f: &mut F)
@@ -1865,6 +2017,255 @@ mod tests {
 
         let mut expected_flags = FlagsRegister::new();
         expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rlc_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.b = 0x85;
+
+        cpu.execute(Instruction::RLC(RotateShiftTarget::Register(Reg::B)));
+
+        assert_eq!(cpu.registers.b, 0x0B);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rlc_hl() {
+        let mut cpu = CPU::new();
+
+        cpu.execute(Instruction::RLC(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(0x0), 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rl_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.l = 0x80;
+
+        cpu.execute(Instruction::RL(RotateShiftTarget::Register(Reg::L)));
+
+        assert_eq!(cpu.registers.l, 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry().set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rl_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0x11);
+
+        cpu.execute(Instruction::RL(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0x22);
+
+        let expected_flags = FlagsRegister::new();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rrc_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.c = 0x01;
+
+        cpu.execute(Instruction::RRC(RotateShiftTarget::Register(Reg::C)));
+
+        assert_eq!(cpu.registers.c, 0x80);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rrc_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0x00);
+
+        cpu.execute(Instruction::RRC(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rr_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x01;
+
+        cpu.execute(Instruction::RR(RotateShiftTarget::Register(Reg::A)));
+
+        assert_eq!(cpu.registers.c, 0x0);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry().set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rr_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0x8A);
+
+        cpu.execute(Instruction::RR(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0x45);
+
+        let expected_flags = FlagsRegister::new();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_sla_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.d = 0x80;
+
+        cpu.execute(Instruction::SLA(RotateShiftTarget::Register(Reg::D)));
+
+        assert_eq!(cpu.registers.d, 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry().set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_sla_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0xFF);
+
+        cpu.execute(Instruction::SLA(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0xFE);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_sra_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x8A;
+
+        cpu.execute(Instruction::SRA(RotateShiftTarget::Register(Reg::A)));
+
+        assert_eq!(cpu.registers.a, 0xC5);
+
+        let expected_flags = FlagsRegister::new();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_sra_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0x01);
+
+        cpu.execute(Instruction::SRA(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry().set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_srl_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x01;
+
+        cpu.execute(Instruction::SRL(RotateShiftTarget::Register(Reg::A)));
+
+        assert_eq!(cpu.registers.a, 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry().set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_srl_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0xFF);
+
+        cpu.execute(Instruction::SRL(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0x7F);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_swap_register() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x00;
+
+        cpu.execute(Instruction::SWAP(RotateShiftTarget::Register(Reg::A)));
+
+        assert_eq!(cpu.registers.a, 0x00);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_zero();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_swap_hl() {
+        let mut cpu = CPU::new();
+        let addr = 0x0123;
+        cpu.registers.set_hl(addr);
+        cpu.bus.write_byte(addr, 0xF0);
+
+        cpu.execute(Instruction::SWAP(RotateShiftTarget::HL));
+
+        assert_eq!(cpu.bus.read_byte(addr), 0x0F);
+
+        let expected_flags = FlagsRegister::new();
 
         assert_eq!(cpu.registers.f, expected_flags);
     }
