@@ -592,6 +592,10 @@ impl Instruction {
             0x0B | 0x1B | 0x2B | 0x3B => Some(Instruction::BIGDEC(RegPair::from_byte_dd(
                 (opcode >> 4) & 0x03,
             ))),
+            0x07 => Some(Instruction::RLCA),
+            0x17 => Some(Instruction::RLA),
+            0x0F => Some(Instruction::RRCA),
+            0x1F => Some(Instruction::RRA),
             _ => None,
         }
     }
@@ -861,6 +865,64 @@ impl CPU {
                 let value = self.registers.get_pair(&rs);
                 let (new_value, _) = value.overflowing_sub(1);
                 self.registers.set_pair(rs, new_value);
+            }
+            Instruction::RLCA => {
+                let bit_7 = self.registers.a & 0x80 == 0x80;
+
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = bit_7;
+
+                if bit_7 {
+                    self.registers.a = (self.registers.a << 1) | 0x01;
+                } else {
+                    self.registers.a = self.registers.a << 1;
+                }
+            }
+            Instruction::RLA => {
+                let bit_7 = self.registers.a & 0x80 == 0x80;
+
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+
+                if self.registers.f.carry {
+                    self.registers.a = (self.registers.a << 1) | 0x01;
+                } else {
+                    self.registers.a = self.registers.a << 1;
+                }
+
+                self.registers.f.carry = bit_7;
+            }
+            Instruction::RRCA => {
+                let bit_0 = self.registers.a & 0x01 == 0x01;
+
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+                self.registers.f.carry = bit_0;
+
+                if bit_0 {
+                    self.registers.a = (self.registers.a >> 1) | 0x80;
+                } else {
+                    self.registers.a = self.registers.a >> 1;
+                }
+            }
+            Instruction::RRA => {
+                let bit_0 = self.registers.a & 0x01 == 0x01;
+
+                self.registers.f.zero = false;
+                self.registers.f.subtract = false;
+                self.registers.f.half_carry = false;
+
+                if self.registers.f.carry {
+                    self.registers.a = (self.registers.a >> 1) | 0x80;
+                } else {
+                    self.registers.a = self.registers.a >> 1;
+                }
+
+                self.registers.f.carry = bit_0;
             }
             _ => { /* TODO */ }
         };
@@ -1744,5 +1806,66 @@ mod tests {
         cpu.execute(Instruction::BIGDEC(RegPair::DE));
 
         assert_eq!(cpu.registers.get_de(), 0x235E);
+    }
+
+    #[test]
+    fn test_rlca() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x85;
+
+        cpu.execute(Instruction::RLCA);
+
+        assert_eq!(cpu.registers.a, 0x0A);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rla() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x95;
+        cpu.registers.f.set_carry();
+
+        cpu.execute(Instruction::RLA);
+
+        assert_eq!(cpu.registers.a, 0x2B);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rrca() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x3B;
+
+        cpu.execute(Instruction::RRCA);
+
+        assert_eq!(cpu.registers.a, 0x9D);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
+    }
+
+    #[test]
+    fn test_rra() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x81;
+
+        cpu.execute(Instruction::RRA);
+
+        assert_eq!(cpu.registers.a, 0x40);
+
+        let mut expected_flags = FlagsRegister::new();
+        expected_flags.set_carry();
+
+        assert_eq!(cpu.registers.f, expected_flags);
     }
 }
