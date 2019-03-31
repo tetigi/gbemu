@@ -352,6 +352,24 @@ enum LoadTarget {
     SP2RAM(u16),
 }
 
+enum Condition {
+    NotZero,
+    Zero,
+    Carry,
+    NotCarry,
+}
+
+enum JPTarget {
+    Immediate(u16),
+    Conditional(Condition, u16),
+    HL,
+}
+
+enum JRTarget {
+    Immediate(u8),
+    Conditional(Condition, u8),
+}
+
 enum Instruction {
     ADD(ArithmeticTarget),
     ADC(ArithmeticTarget),
@@ -385,8 +403,8 @@ enum Instruction {
     BIT(u8, BitTarget),
     SET(u8, BitTarget),
     RES(u8, BitTarget),
-    JP,
-    JR,
+    JP(JPTarget),
+    JR(JRTarget),
     CALL,
     RET,
     RETI,
@@ -623,6 +641,7 @@ impl Instruction {
             0x17 => Some(Instruction::RLA),
             0x0F => Some(Instruction::RRCA),
             0x1F => Some(Instruction::RRA),
+            //0xC3 =>
             /* Prefix Instructions */
             0xCB => {
                 let opcode = Instruction::read_immediate(opcode, bytes);
