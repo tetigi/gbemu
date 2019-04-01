@@ -382,6 +382,11 @@ enum JRTarget {
     Conditional(Condition, u8),
 }
 
+enum CallTarget {
+    Immediate(u16),
+    Conditional(Condition, u16),
+}
+
 enum Instruction {
     ADD(ArithmeticTarget),
     ADC(ArithmeticTarget),
@@ -417,8 +422,8 @@ enum Instruction {
     RES(u8, BitTarget),
     JP(JPTarget),
     JR(JRTarget),
-    CALL,
-    RET,
+    CALL(CallTarget),
+    RET(Option<Condition>),
     RETI,
     RST,
     DAA,
@@ -443,7 +448,7 @@ impl Instruction {
         }
     }
 
-    fn read_big_immediate<I>(opcode: u8, bytes: &mut I) -> u16
+    fn read_big_immediate_hl<I>(opcode: u8, bytes: &mut I) -> u16
     where
         I: Iterator<Item = (u16, u8)>,
     {
@@ -451,6 +456,20 @@ impl Instruction {
 
         if ns.len() == 2 {
             (ns[0] as u16) << 8 | ns[1] as u16
+        } else {
+            panic!("Bus overrun whilst reading 0x{:x}", opcode);
+        }
+    }
+
+    /* Same as operand but flips first and second byte */
+    fn read_big_immediate_lh<I>(opcode: u8, bytes: &mut I) -> u16
+    where
+        I: Iterator<Item = (u16, u8)>,
+    {
+        let ns: Vec<u8> = bytes.take(2).map(|(_, b)| b).collect();
+
+        if ns.len() == 2 {
+            (ns[1] as u16) << 8 | ns[0] as u16
         } else {
             panic!("Bus overrun whilst reading 0x{:x}", opcode);
         }
@@ -533,11 +552,11 @@ impl Instruction {
                 Some(Instruction::LD(LoadTarget::A2ImmediateRAM(n)))
             }
             0xFA => {
-                let nn = Instruction::read_big_immediate(opcode, bytes);
+                let nn = Instruction::read_big_immediate_hl(opcode, bytes);
                 Some(Instruction::LD(LoadTarget::BigImmediateRAM2A(nn)))
             }
             0xEA => {
-                let nn = Instruction::read_big_immediate(opcode, bytes);
+                let nn = Instruction::read_big_immediate_hl(opcode, bytes);
                 Some(Instruction::LD(LoadTarget::A2BigImmediateRAM(nn)))
             }
             0xF2 => Some(Instruction::LD(LoadTarget::CRAM2A)),
@@ -549,7 +568,7 @@ impl Instruction {
             0x22 => Some(Instruction::LD(LoadTarget::A2HLI)),
             0x32 => Some(Instruction::LD(LoadTarget::A2HLD)),
             0x01 | 0x11 | 0x21 | 0x31 => {
-                let nn = Instruction::read_big_immediate(opcode, bytes);
+                let nn = Instruction::read_big_immediate_lh(opcode, bytes);
                 let rs = RegPair::from_byte_dd((opcode >> 4) & 0x03);
                 Some(Instruction::LD(LoadTarget::BigImmediate2Regs(rs, nn)))
             }
@@ -561,7 +580,7 @@ impl Instruction {
                 (opcode >> 4) & 0x03,
             ))),
             0x08 => {
-                let nn = Instruction::read_big_immediate(opcode, bytes);
+                let nn = Instruction::read_big_immediate_lh(opcode, bytes);
                 Some(Instruction::LD(LoadTarget::SP2RAM(nn)))
             }
             0x87 | 0x80 | 0x81 | 0x82 | 0x83 | 0x84 | 0x85 => Some(Instruction::ADD(
@@ -654,13 +673,13 @@ impl Instruction {
             0x0F => Some(Instruction::RRCA),
             0x1F => Some(Instruction::RRA),
             0xC3 => {
-                let nn = Instruction::read_big_immediate(opcode, bytes);
+                let nn = Instruction::read_big_immediate_lh(opcode, bytes);
                 // first 8 is lower, second 8 is higher
                 let nn = ((nn & 0x00FF) << 8) | ((nn & 0xFF00) >> 8);
                 Some(Instruction::JP(JPTarget::Immediate(nn)))
             }
             0xC2 | 0xCA | 0xD2 | 0xDA => {
-                let nn = Instruction::read_big_immediate(opcode, bytes);
+                let nn = Instruction::read_big_immediate_lh(opcode, bytes);
                 // first 8 is lower, second 8 is higher
                 let nn = ((nn & 0x00FF) << 8) | ((nn & 0xFF00) >> 8);
                 let condition = Condition::from_byte((opcode & 0x18) >> 3);
@@ -678,6 +697,24 @@ impl Instruction {
 
                 Some(Instruction::JR(JRTarget::Conditional(condition, e)))
             }
+            0xCD => {
+                let nn = Instruction::read_big_immediate_lh(opcode, bytes);
+
+                Some(Instruction::CALL(CallTarget::Immediate(nn)))
+            }
+            0xC4 | 0xCC | 0xD4 | 0xDC => {
+                let nn = Instruction::read_big_immediate_lh(opcode, bytes);
+                let condition = Condition::from_byte((opcode & 0x18) >> 3);
+
+                Some(Instruction::CALL(CallTarget::Conditional(condition, nn)))
+            }
+            0xC9 => Some(Instruction::RET(None)),
+            0xC0 | 0xC8 | 0xD0 | 0xD8 => {
+                let condition = Condition::from_byte((opcode & 0x18) >> 3);
+
+                Some(Instruction::RET(Some(condition)))
+            }
+            0xD9 => Some(Instruction::RETI),
             /* Prefix Instructions */
             0xCB => {
                 let opcode = Instruction::read_immediate(opcode, bytes);
@@ -1185,6 +1222,15 @@ impl CPU {
                     }
                 }
             },
+            Instruction::CALL(target) => match target {
+                CallTarget::Immediate(nn) => None,
+                CallTarget::Conditional(c, nn) => None,
+            },
+            Instruction::RET(maybe_condition) => match maybe_condition {
+                Some(condition) => None,
+                None => None,
+            },
+            Instruction::RETI => None,
             _ => {
                 /* TODO */
                 None
