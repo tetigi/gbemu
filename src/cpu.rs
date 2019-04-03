@@ -2890,14 +2890,14 @@ mod tests {
 
         assert_eq!(cpu.registers.a, 0x7D);
 
-        let mut instruction = Instruction::DAA;
+        instruction = Instruction::DAA;
         cpu.execute(&instruction);
         cpu.last_instruction = Some(instruction);
 
         assert_eq!(cpu.registers.a, 0x83);
         assert_eq!(cpu.registers.f.carry, false);
 
-        let mut instruction = Instruction::SUB(ArithmeticTarget::Register(Reg::B));
+        instruction = Instruction::SUB(ArithmeticTarget::Register(Reg::B));
         cpu.execute(&instruction);
         cpu.last_instruction = Some(instruction);
 
