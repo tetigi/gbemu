@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -12,6 +13,10 @@ const ZERO_FLAG_BYTE_POSITION: u8 = 7;
 const SUBTRACT_FLAG_BYTE_POSITION: u8 = 6;
 const HALF_CARRY_FLAG_BYTE_POSITION: u8 = 5;
 const CARRY_FLAG_BYTE_POSITION: u8 = 4;
+
+fn between(n: u8, a: u8, b: u8) -> bool {
+    n >= a && n <= b
+}
 
 impl std::convert::From<FlagsRegister> for u8 {
     fn from(flag: FlagsRegister) -> u8 {
@@ -164,7 +169,7 @@ impl Registers {
         self
     }
 
-    pub fn set_pair(&mut self, rs: RegPair, value: u16) -> &mut Self {
+    pub fn set_pair(&mut self, rs: &RegPair, value: u16) -> &mut Self {
         match rs {
             RegPair::BC => self.set_bc(value),
             RegPair::DE => self.set_de(value),
@@ -425,12 +430,13 @@ enum Instruction {
     CALL(CallTarget),
     RET(Option<Condition>),
     RETI,
-    RST,
+    RST(u8),
     DAA,
     CPL,
     NOP,
     CCF,
     SCF,
+    DI,
     EI,
     HALT,
     STOP,
@@ -715,6 +721,38 @@ impl Instruction {
                 Some(Instruction::RET(Some(condition)))
             }
             0xD9 => Some(Instruction::RETI),
+            0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => {
+                let pcl = match (opcode & 0x38) >> 3 {
+                    0x0 => 0x00,
+                    0x1 => 0x08,
+                    0x2 => 0x10,
+                    0x3 => 0x18,
+                    0x4 => 0x20,
+                    0x5 => 0x28,
+                    0x6 => 0x30,
+                    0x7 => 0x38,
+                    _ => panic!("Opcode for RETI is not valid! {}", opcode),
+                };
+
+                Some(Instruction::RST(pcl))
+            }
+            0x27 => Some(Instruction::DAA),
+            0x2F => Some(Instruction::CPL),
+            0x3F => Some(Instruction::CCF),
+            0x37 => Some(Instruction::SCF),
+            0x00 => Some(Instruction::NOP),
+            0x76 => Some(Instruction::HALT),
+            0xF3 => Some(Instruction::DI),
+            0xFB => Some(Instruction::EI),
+            0x10 => {
+                let n = Instruction::read_immediate(opcode, bytes);
+                if n == 0x0 {
+                    Some(Instruction::STOP)
+                } else {
+                    None
+                }
+            }
+
             /* Prefix Instructions */
             0xCB => {
                 let opcode = Instruction::read_immediate(opcode, bytes);
@@ -780,6 +818,8 @@ struct CPU {
     pc: u16,
     sp: u16,
     bus: MemoryBus,
+    ime: bool,
+    last_instruction: Option<Instruction>,
 }
 
 impl CPU {
@@ -788,7 +828,9 @@ impl CPU {
             registers: Registers::new(),
             pc: 0x100,
             sp: 0xFFFE,
+            ime: false,
             bus: MemoryBus::new(),
+            last_instruction: None,
         }
     }
 
@@ -800,31 +842,36 @@ impl CPU {
             .into_iter();
 
         if let Some(instruction) = Instruction::from_byte(instruction_byte, &mut more_bytes) {
-            if let Some(new_pointer) = self.execute(instruction) {
+            if let Some(new_pointer) = self.execute(&instruction) {
                 self.pc = new_pointer;
             } else {
                 self.pc = more_bytes.cursor;
             }
+
+            self.last_instruction = Some(instruction);
         } else {
             panic!("Unknown instruction found for 0x{:x}", instruction_byte);
         }
     }
 
-    fn execute(&mut self, instruction: Instruction) -> Option<u16> {
-        match instruction {
+    fn execute<K>(&mut self, instruction: K) -> Option<u16>
+    where
+        K: Borrow<Instruction>,
+    {
+        match instruction.borrow() {
             Instruction::LD(target) => {
                 match target {
                     LoadTarget::Reg2Reg(r1, r2) => {
                         let value = self.registers.get_reg(&r2);
 
-                        self.registers.set_reg(&r1, value);
+                        self.registers.set_reg(r1, value);
                     }
                     LoadTarget::Immediate2Reg(r, value) => {
-                        self.registers.set_reg(&r, value);
+                        self.registers.set_reg(r, *value);
                     }
                     LoadTarget::HL2Reg(r) => {
                         let addr = self.registers.get_hl();
-                        self.registers.set_reg(&r, self.bus.read_byte(addr));
+                        self.registers.set_reg(r, self.bus.read_byte(addr));
                     }
                     LoadTarget::Reg2HL(r) => {
                         let value = self.registers.get_reg(&r);
@@ -833,7 +880,7 @@ impl CPU {
                     }
                     LoadTarget::Immediate2HL(value) => {
                         let addr = self.registers.get_hl();
-                        self.bus.write_byte(addr, value);
+                        self.bus.write_byte(addr, *value);
                     }
                     LoadTarget::BC2A => {
                         let addr = self.registers.get_bc();
@@ -867,23 +914,23 @@ impl CPU {
                         self.bus.write_byte(addr, self.registers.a);
                     }
                     LoadTarget::ImmediateRAM2A(addr) => {
-                        let addr = 0xFF00 + (addr as u16);
+                        let addr = 0xFF00 + (*addr as u16);
                         let value = self.bus.read_byte(addr);
 
                         self.registers.a = value;
                     }
                     LoadTarget::A2ImmediateRAM(addr) => {
-                        let addr = 0xFF00 + (addr as u16);
+                        let addr = 0xFF00 + (*addr as u16);
 
                         self.bus.write_byte(addr, self.registers.a);
                     }
                     LoadTarget::BigImmediateRAM2A(addr) => {
-                        let value = self.bus.read_byte(addr);
+                        let value = self.bus.read_byte(*addr);
 
                         self.registers.a = value;
                     }
                     LoadTarget::A2BigImmediateRAM(addr) => {
-                        self.bus.write_byte(addr, self.registers.a);
+                        self.bus.write_byte(*addr, self.registers.a);
                     }
                     LoadTarget::HLI2A => {
                         let addr = self.registers.get_hl();
@@ -916,15 +963,15 @@ impl CPU {
                     LoadTarget::BigImmediate2Regs(rs, n) => {
                         match rs {
                             RegPair::BC => {
-                                self.registers.set_bc(n);
+                                self.registers.set_bc(*n);
                             }
                             RegPair::DE => {
-                                self.registers.set_de(n);
+                                self.registers.set_de(*n);
                             }
                             RegPair::HL => {
-                                self.registers.set_hl(n);
+                                self.registers.set_hl(*n);
                             }
-                            RegPair::SP => self.sp = n,
+                            RegPair::SP => self.sp = *n,
                             RegPair::AF => panic!("Flag pair not suported in LD BigImmediate2Regs"),
                         };
                     }
@@ -936,8 +983,8 @@ impl CPU {
                         let value = self.sp;
                         let h = ((value & 0xFF00) >> 8) as u8;
                         let l = (value & 0x00FF) as u8;
-                        self.bus.write_byte(nn, l);
-                        self.bus.write_byte(nn + 1, h);
+                        self.bus.write_byte(*nn, l);
+                        self.bus.write_byte(*nn + 1, h);
                     }
                 };
                 None
@@ -963,7 +1010,7 @@ impl CPU {
                 None
             }
             Instruction::LDHL(e) => {
-                let (value, _is_pos) = CPU::i_to_u16(e);
+                let (value, _is_pos) = CPU::i_to_u16(*e);
                 let (new_value, did_overflow) = self.sp.overflowing_add(value);
 
                 self.registers.f.zero = false;
@@ -1036,7 +1083,7 @@ impl CPU {
                         self.registers.set_hl(new_value);
                     }
                     BigArithmeticTarget::Operand(e) => {
-                        let (value, _is_pos) = CPU::i_to_u16(e);
+                        let (value, _is_pos) = CPU::i_to_u16(*e);
                         let (new_value, did_overflow) = self.sp.overflowing_add(value);
 
                         self.registers.f.zero = false;
@@ -1148,10 +1195,10 @@ impl CPU {
                 None
             }
             Instruction::JP(target) => match target {
-                JPTarget::Immediate(nn) => Some(nn),
+                JPTarget::Immediate(nn) => Some(*nn),
                 JPTarget::Conditional(c, nn) => {
-                    if self.check_condition(c) {
-                        Some(nn)
+                    if self.check_condition(&c) {
+                        Some(*nn)
                     } else {
                         None
                     }
@@ -1160,14 +1207,14 @@ impl CPU {
             },
             Instruction::JR(target) => match target {
                 JRTarget::Immediate(n) => {
-                    let (e, _) = CPU::i_to_u16(n);
+                    let (e, _) = CPU::i_to_u16(*n);
 
                     Some(self.pc + e + 2)
                 }
                 JRTarget::Conditional(c, n) => {
-                    let (e, _) = CPU::i_to_u16(n);
+                    let (e, _) = CPU::i_to_u16(*n);
 
-                    if self.check_condition(c) {
+                    if self.check_condition(&c) {
                         Some(self.pc + e + 2)
                     } else {
                         None
@@ -1183,7 +1230,7 @@ impl CPU {
                     self.bus.write_byte(self.sp - 2, pcl);
                     self.sp -= 2;
 
-                    Some(nn)
+                    Some(*nn)
                 }
                 CallTarget::Conditional(c, nn) => {
                     if self.check_condition(c) {
@@ -1194,25 +1241,150 @@ impl CPU {
                         self.bus.write_byte(self.sp - 2, pcl);
                         self.sp -= 2;
 
-                        Some(nn)
+                        Some(*nn)
                     } else {
                         None
                     }
                 }
             },
             Instruction::RET(maybe_condition) => match maybe_condition {
-                Some(condition) => None,
-                None => None,
+                None => {
+                    let pcl = self.bus.read_byte(self.sp) as u16;
+                    let pch = self.bus.read_byte(self.sp + 1) as u16;
+                    self.sp += 2;
+
+                    Some((pch << 8) | pcl)
+                }
+                Some(condition) => {
+                    if self.check_condition(condition) {
+                        let pcl = self.bus.read_byte(self.sp) as u16;
+                        let pch = self.bus.read_byte(self.sp + 1) as u16;
+                        self.sp += 2;
+
+                        Some((pch << 8) | pcl)
+                    } else {
+                        None
+                    }
+                }
             },
-            Instruction::RETI => None,
-            _ => {
-                /* TODO */
+            Instruction::RETI => {
+                let pcl = self.bus.read_byte(self.sp) as u16;
+                let pch = self.bus.read_byte(self.sp + 1) as u16;
+                self.sp += 2;
+
+                // TODO some stuff to do with interrupts here
+
+                Some((pch << 8) | pcl)
+            }
+            Instruction::RST(new_pcl) => {
+                let pch = ((self.pc & 0xFF00) >> 8) as u8;
+                let pcl = (self.pc & 0x00FF) as u8;
+                self.bus.write_byte(self.sp - 1, pch);
+                self.bus.write_byte(self.sp - 2, pcl);
+                self.sp -= 2;
+
+                Some(*new_pcl as u16)
+            }
+            Instruction::DAA => {
+                self.daa_adjust();
+                self.registers.f.half_carry = false;
+
                 None
             }
+            Instruction::CPL => {
+                self.registers.a = !self.registers.a;
+
+                None
+            }
+            Instruction::NOP => None,
+            Instruction::CCF => {
+                self.registers.f.carry = !self.registers.f.carry;
+
+                None
+            }
+            Instruction::SCF => {
+                self.registers.f.set_carry();
+
+                None
+            }
+            Instruction::DI => {
+                self.ime = false;
+
+                None
+            }
+            Instruction::EI => {
+                self.ime = true;
+
+                None
+            }
+            Instruction::HALT => None, // TODO
+            Instruction::STOP => None, // TODO
         }
     }
 
-    fn check_condition(&self, condition: Condition) -> bool {
+    fn daa_adjust(&mut self) {
+        let bits4_7 = (self.registers.a & 0xF0) >> 4;
+        let bits0_3 = self.registers.a & 0x0F;
+        let cy = self.registers.f.carry;
+        let h = self.registers.f.half_carry;
+
+        if let Some(last) = &self.last_instruction {
+            match last {
+                Instruction::ADD(_) | Instruction::ADC(_) => {
+                    if !cy && between(bits4_7, 0x0, 0x9) && !h && between(bits0_3, 0x0, 0x9) {
+                        self.registers.a = self.registers.a.overflowing_add(0x0).0;
+                        self.registers.f.carry = false;
+                    } else if !cy && between(bits4_7, 0x0, 0x8) && !h && between(bits0_3, 0xA, 0xF)
+                    {
+                        self.registers.a = self.registers.a.overflowing_add(0x6).0;
+                        self.registers.f.carry = false;
+                    } else if !cy && between(bits4_7, 0x0, 0x9) && h && between(bits0_3, 0x0, 0x3) {
+                        self.registers.a = self.registers.a.overflowing_add(0x6).0;
+                        self.registers.f.carry = false;
+                    } else if !cy && between(bits4_7, 0xA, 0xF) && !h && between(bits0_3, 0x0, 0x9)
+                    {
+                        self.registers.a = self.registers.a.overflowing_add(0x60).0;
+                        self.registers.f.carry = true;
+                    } else if !cy && between(bits4_7, 0x9, 0xF) && !h && between(bits0_3, 0xA, 0xF)
+                    {
+                        self.registers.a = self.registers.a.overflowing_add(0x66).0;
+                        self.registers.f.carry = true;
+                    } else if !cy && between(bits4_7, 0xA, 0xF) && h && between(bits0_3, 0x0, 0x3) {
+                        self.registers.a = self.registers.a.overflowing_add(0x66).0;
+                        self.registers.f.carry = true;
+                    } else if cy && between(bits4_7, 0x0, 0x2) && !h && between(bits0_3, 0x0, 0x9) {
+                        self.registers.a = self.registers.a.overflowing_add(0x60).0;
+                        self.registers.f.carry = true;
+                    } else if cy && between(bits4_7, 0x0, 0x2) && !h && between(bits0_3, 0xA, 0xF) {
+                        self.registers.a = self.registers.a.overflowing_add(0x66).0;
+                        self.registers.f.carry = true;
+                    } else if cy && between(bits4_7, 0x0, 0x3) && h && between(bits0_3, 0x0, 0x3) {
+                        self.registers.a = self.registers.a.overflowing_add(0x66).0;
+                        self.registers.f.carry = true;
+                    }
+                }
+                Instruction::SUB(_) | Instruction::SBC(_) => {
+                    println!("{:x} {:x} {} {}", bits4_7, bits0_3, cy, h);
+                    if !cy && between(bits4_7, 0x0, 0x9) && !h && between(bits0_3, 0x0, 0x9) {
+                        self.registers.a = self.registers.a.overflowing_add(0x0).0;
+                        self.registers.f.carry = false;
+                    } else if !cy && between(bits4_7, 0x0, 0x8) && h && between(bits0_3, 0x6, 0xF) {
+                        self.registers.a = self.registers.a.overflowing_add(0xFA).0;
+                        self.registers.f.carry = false;
+                    } else if cy && between(bits4_7, 0x7, 0xF) && !h && between(bits0_3, 0x0, 0x9) {
+                        self.registers.a = self.registers.a.overflowing_add(0xA0).0;
+                        self.registers.f.carry = true;
+                    } else if cy && between(bits4_7, 0x6, 0xF) && h && between(bits0_3, 0x6, 0xF) {
+                        self.registers.a = self.registers.a.overflowing_add(0x9A).0;
+                        self.registers.f.carry = true;
+                    }
+                }
+                _ => (),
+            };
+        };
+    }
+
+    fn check_condition(&self, condition: &Condition) -> bool {
         match condition {
             Condition::NotZero => !self.registers.f.zero,
             Condition::Zero => self.registers.f.zero,
@@ -1221,7 +1393,7 @@ impl CPU {
         }
     }
 
-    fn do_rotation<F>(&mut self, target: RotateShiftTarget, f: &mut F) -> Option<u16>
+    fn do_rotation<F>(&mut self, target: &RotateShiftTarget, f: &mut F) -> Option<u16>
     where
         F: FnMut(&mut Self, u8) -> u8,
     {
@@ -1362,7 +1534,7 @@ impl CPU {
         value
     }
 
-    fn do_arithmetic<F>(&mut self, target: ArithmeticTarget, f: &mut F) -> Option<u16>
+    fn do_arithmetic<F>(&mut self, target: &ArithmeticTarget, f: &mut F) -> Option<u16>
     where
         F: FnMut(&mut Self, u8) -> (),
     {
@@ -1377,7 +1549,7 @@ impl CPU {
                 f(self, value);
             }
             ArithmeticTarget::Immediate(n) => {
-                f(self, n);
+                f(self, *n);
             }
         };
 
@@ -2705,4 +2877,35 @@ mod tests {
 
     #[test]
     fn test_jr_conditional() {}
+
+    #[test]
+    fn test_daa() {
+        let mut cpu = CPU::new();
+        cpu.registers.a = 0x45;
+        cpu.registers.b = 0x38;
+
+        let mut instruction = Instruction::ADD(ArithmeticTarget::Register(Reg::B));
+        cpu.execute(&instruction);
+        cpu.last_instruction = Some(instruction);
+
+        assert_eq!(cpu.registers.a, 0x7D);
+
+        let mut instruction = Instruction::DAA;
+        cpu.execute(&instruction);
+        cpu.last_instruction = Some(instruction);
+
+        assert_eq!(cpu.registers.a, 0x83);
+        assert_eq!(cpu.registers.f.carry, false);
+
+        let mut instruction = Instruction::SUB(ArithmeticTarget::Register(Reg::B));
+        cpu.execute(&instruction);
+        cpu.last_instruction = Some(instruction);
+
+        assert_eq!(cpu.registers.a, 0x4B);
+        assert_eq!(cpu.registers.f.subtract, true);
+
+        cpu.execute(Instruction::DAA);
+
+        assert_eq!(cpu.registers.a, 0x45);
+    }
 }
