@@ -1149,36 +1149,13 @@ impl CPU {
             }
             Instruction::JP(target) => match target {
                 JPTarget::Immediate(nn) => Some(nn),
-                JPTarget::Conditional(c, nn) => match c {
-                    Condition::NotZero => {
-                        if !self.registers.f.zero {
-                            Some(nn)
-                        } else {
-                            None
-                        }
+                JPTarget::Conditional(c, nn) => {
+                    if self.check_condition(c) {
+                        Some(nn)
+                    } else {
+                        None
                     }
-                    Condition::Zero => {
-                        if self.registers.f.zero {
-                            Some(nn)
-                        } else {
-                            None
-                        }
-                    }
-                    Condition::NotCarry => {
-                        if !self.registers.f.carry {
-                            Some(nn)
-                        } else {
-                            None
-                        }
-                    }
-                    Condition::Carry => {
-                        if self.registers.f.carry {
-                            Some(nn)
-                        } else {
-                            None
-                        }
-                    }
-                },
+                }
                 JPTarget::HL => Some(self.registers.get_hl()),
             },
             Instruction::JR(target) => match target {
@@ -1190,42 +1167,38 @@ impl CPU {
                 JRTarget::Conditional(c, n) => {
                     let (e, _) = CPU::i_to_u16(n);
 
-                    match c {
-                        Condition::NotZero => {
-                            if !self.registers.f.zero {
-                                Some(self.pc + e + 2)
-                            } else {
-                                None
-                            }
-                        }
-                        Condition::Zero => {
-                            if self.registers.f.zero {
-                                Some(self.pc + e + 2)
-                            } else {
-                                None
-                            }
-                        }
-                        Condition::NotCarry => {
-                            if !self.registers.f.carry {
-                                Some(self.pc + e + 2)
-                            } else {
-                                None
-                            }
-                        }
-                        Condition::Carry => {
-                            if self.registers.f.carry {
-                                Some(self.pc + e + 2)
-                            } else {
-                                None
-                            }
-                        }
+                    if self.check_condition(c) {
+                        Some(self.pc + e + 2)
+                    } else {
+                        None
                     }
                 }
             },
-            //TODO
             Instruction::CALL(target) => match target {
-                CallTarget::Immediate(nn) => None,
-                CallTarget::Conditional(c, nn) => None,
+                CallTarget::Immediate(nn) => {
+                    let pch = ((self.pc & 0xFF00) >> 8) as u8;
+                    let pcl = (self.pc & 0x00FF) as u8;
+
+                    self.bus.write_byte(self.sp - 1, pch);
+                    self.bus.write_byte(self.sp - 2, pcl);
+                    self.sp -= 2;
+
+                    Some(nn)
+                }
+                CallTarget::Conditional(c, nn) => {
+                    if self.check_condition(c) {
+                        let pch = ((self.pc & 0xFF00) >> 8) as u8;
+                        let pcl = (self.pc & 0x00FF) as u8;
+
+                        self.bus.write_byte(self.sp - 1, pch);
+                        self.bus.write_byte(self.sp - 2, pcl);
+                        self.sp -= 2;
+
+                        Some(nn)
+                    } else {
+                        None
+                    }
+                }
             },
             Instruction::RET(maybe_condition) => match maybe_condition {
                 Some(condition) => None,
@@ -1236,6 +1209,15 @@ impl CPU {
                 /* TODO */
                 None
             }
+        }
+    }
+
+    fn check_condition(&self, condition: Condition) -> bool {
+        match condition {
+            Condition::NotZero => !self.registers.f.zero,
+            Condition::Zero => self.registers.f.zero,
+            Condition::NotCarry => !self.registers.f.carry,
+            Condition::Carry => self.registers.f.carry,
         }
     }
 
