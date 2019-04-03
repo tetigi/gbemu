@@ -14,9 +14,23 @@ fn main() -> std::io::Result<()> {
 
     cpu.load_rom(&buffer);
 
-    for _ in 0..20 {
+    for _ in 0..90000000 {
         cpu.step();
-        dbg!(&cpu);
+
+        match cpu.pc {
+            0x7 => println!("Setup"),
+            0x27 => println!("Video setup"),
+            0x39 => println!("Tilemap setup"),
+            0x48 => println!("Some load 1"),
+            0x4A => println!("pre-logo"),
+            0x55 => println!("Scroll start.."),
+            0x64 => println!("wait for screen"),
+            0x80 => println!("Play sound!"),
+            0x86 => println!("Scroll up?"),
+            0xA8 => println!("Nintendo logo"),
+            _ => (),
+        };
+        //dbg!(&cpu);
     }
 
     Ok(())

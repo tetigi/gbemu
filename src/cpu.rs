@@ -213,7 +213,7 @@ impl Registers {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Reg {
     A,
     B,
@@ -242,7 +242,7 @@ impl Reg {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum RegPair {
     BC,
     DE,
@@ -324,7 +324,6 @@ impl MemoryBus {
     }
 
     fn write_byte(&mut self, address: u16, value: u8) -> &mut Self {
-        println!("Writing..");
         if let Some(mem) = Rc::get_mut(&mut self.memory) {
             mem[address as usize] = value;
         } else {
@@ -335,32 +334,32 @@ impl MemoryBus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum ArithmeticTarget {
     Register(Reg),
     HL,
     Immediate(u8),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum BigArithmeticTarget {
     Registers(RegPair),
     Operand(u8),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum RotateShiftTarget {
     Register(Reg),
     HL,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum BitTarget {
     Register(Reg),
     HL,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum LoadTarget {
     Reg2Reg(Reg, Reg),
     Immediate2Reg(Reg, u8),
@@ -377,6 +376,7 @@ enum LoadTarget {
     A2BigImmediateRAM(u16),
     HLI2A,
     HLD2A,
+    A2HL,
     A2HLI,
     A2HLD,
     A2BC,
@@ -386,7 +386,7 @@ enum LoadTarget {
     SP2RAM(u16),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Condition {
     NotZero,
     Zero,
@@ -406,26 +406,26 @@ impl Condition {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum JPTarget {
     Immediate(u16),
     Conditional(Condition, u16),
     HL,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum JRTarget {
     Immediate(u8),
     Conditional(Condition, u8),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum CallTarget {
     Immediate(u16),
     Conditional(Condition, u16),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Instruction {
     ADD(ArithmeticTarget),
     ADC(ArithmeticTarget),
@@ -528,43 +528,43 @@ impl Instruction {
                 let n = Instruction::read_immediate(opcode, bytes);
                 Some(Instruction::LD(LoadTarget::Immediate2Reg(r, n)))
             }
-            0x7F | 0x78 | 0x79 | 0x7A | 0x7B | 0x7C | 0x7D => {
+            0x7F | 0x78 | 0x79 | 0x7A | 0x7B | 0x7C | 0x7D | 0x7F => {
                 let r1 = Reg::A;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
-            0x40 | 0x41 | 0x42 | 0x43 | 0x44 | 0x45 => {
+            0x40 | 0x41 | 0x42 | 0x43 | 0x44 | 0x45 | 0x47 => {
                 let r1 = Reg::B;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
-            0x48 | 0x49 | 0x4A | 0x4B | 0x4C | 0x4D => {
+            0x48 | 0x49 | 0x4A | 0x4B | 0x4C | 0x4D | 0x4F => {
                 let r1 = Reg::C;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
-            0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 => {
+            0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 | 0x47 => {
                 let r1 = Reg::D;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
-            0x58 | 0x59 | 0x5A | 0x5B | 0x5C | 0x5D => {
+            0x58 | 0x59 | 0x5A | 0x5B | 0x5C | 0x5D | 0x5F => {
                 let r1 = Reg::E;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
-            0x60 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65 => {
+            0x60 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65 | 0x67 => {
                 let r1 = Reg::H;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
-            0x68 | 0x69 | 0x6A | 0x6B | 0x6C | 0x6D => {
+            0x68 | 0x69 | 0x6A | 0x6B | 0x6C | 0x6D | 0x6F => {
                 let r1 = Reg::L;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
@@ -610,6 +610,7 @@ impl Instruction {
             0x12 => Some(Instruction::LD(LoadTarget::A2DE)),
             0x22 => Some(Instruction::LD(LoadTarget::A2HLI)),
             0x32 => Some(Instruction::LD(LoadTarget::A2HLD)),
+            0x77 => Some(Instruction::LD(LoadTarget::A2HL)),
             0x01 | 0x11 | 0x21 | 0x31 => {
                 let nn = Instruction::read_big_immediate_lh(opcode, bytes);
                 let rs = RegPair::from_byte_dd((opcode >> 4) & 0x03);
@@ -852,7 +853,7 @@ impl Instruction {
 
 pub struct CPU {
     registers: Registers,
-    pc: u16,
+    pub pc: u16,
     sp: u16,
     bus: MemoryBus,
     ime: bool,
@@ -947,6 +948,11 @@ impl CPU {
                     LoadTarget::A2BC => {
                         let value = self.registers.a;
                         let addr = self.registers.get_bc();
+                        self.bus.write_byte(addr, value);
+                    }
+                    LoadTarget::A2HL => {
+                        let value = self.registers.a;
+                        let addr = self.registers.get_hl();
                         self.bus.write_byte(addr, value);
                     }
                     LoadTarget::DE2A => {
@@ -1067,12 +1073,8 @@ impl CPU {
                 None
             }
             Instruction::LDHL(e) => {
-                let (value, is_pos) = CPU::i_to_u16(*e);
-                let (new_value, did_overflow) = if is_pos {
-                    self.sp.overflowing_add(value)
-                } else {
-                    self.sp.overflowing_sub(value)
-                };
+                let (value, _is_pos) = CPU::i_to_u16(*e);
+                let (new_value, did_overflow) = self.sp.overflowing_add(value);
 
                 self.registers.f.zero = false;
                 self.registers.f.subtract = false;
@@ -1144,12 +1146,8 @@ impl CPU {
                         self.registers.set_hl(new_value);
                     }
                     BigArithmeticTarget::Operand(e) => {
-                        let (value, is_pos) = CPU::i_to_u16(*e);
-                        let (new_value, did_overflow) = if is_pos {
-                            self.sp.overflowing_add(value)
-                        } else {
-                            self.sp.overflowing_sub(value)
-                        };
+                        let (value, _is_pos) = CPU::i_to_u16(*e);
+                        let (new_value, did_overflow) = self.sp.overflowing_add(value);
 
                         self.registers.f.zero = false;
                         self.registers.f.subtract = false;
@@ -1274,21 +1272,13 @@ impl CPU {
                 JRTarget::Immediate(n) => {
                     let (e, is_pos) = CPU::i_to_u16(*n);
 
-                    if is_pos {
-                        Some(self.pc.overflowing_add(e + 2).0)
-                    } else {
-                        Some(self.pc.overflowing_sub(e + 2).0)
-                    }
+                    Some(self.pc.overflowing_add(e + 2).0)
                 }
                 JRTarget::Conditional(c, n) => {
                     let (e, is_pos) = CPU::i_to_u16(*n);
 
                     if self.check_condition(&c) {
-                        if is_pos {
-                            Some(self.pc.overflowing_add(e + 2).0)
-                        } else {
-                            Some(self.pc.overflowing_sub(e + 2).0)
-                        }
+                        Some(self.pc.overflowing_add(e + 2).0)
                     } else {
                         None
                     }
@@ -1390,8 +1380,8 @@ impl CPU {
 
                 None
             }
-            Instruction::HALT => None, // TODO
-            Instruction::STOP => None, // TODO
+            Instruction::HALT => panic!("HALT"), // TODO
+            Instruction::STOP => panic!("STOP"), // TODO
         }
     }
 
@@ -1754,6 +1744,8 @@ impl CPU {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::Read;
 
     #[test]
     fn test_add_register_register() {
@@ -2983,5 +2975,42 @@ mod tests {
     }
 
     #[test]
-    fn test_gameboy_start() {}
+    fn test_gameboy_start() {
+        let mut cpu = CPU::new();
+        let mut buffer = Vec::new();
+        let mut f = File::open("DMG_ROM.bin").unwrap();
+        f.read_to_end(&mut buffer).unwrap();
+        cpu.load_rom(&buffer);
+
+        let cmds = vec![
+            (
+                Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::SP, 0xFFFE)),
+                0,
+            ),
+            (Instruction::XOR(ArithmeticTarget::Register(Reg::A)), 3),
+            (
+                Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::HL, 0x9FFF)),
+                4,
+            ),
+            (Instruction::LD(LoadTarget::A2HLD), 7),
+            (Instruction::BIT(7, BitTarget::Register(Reg::H)), 8),
+            (
+                Instruction::JR(JRTarget::Conditional(
+                    Condition::NotZero,
+                    (!(0x5 as u8) + 1),
+                )),
+                0xA,
+            ),
+            (
+                Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::HL, 0xFF26)),
+                0xC,
+            ),
+        ];
+
+        for (cmd, pc) in cmds.into_iter() {
+            assert_eq!(cpu.pc, pc);
+            cpu.step();
+            assert_eq!(cpu.last_instruction, Some(cmd));
+        }
+    }
 }
