@@ -1,7 +1,9 @@
+use fmt::Debug;
 use std::borrow::Borrow;
+use std::fmt;
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 struct FlagsRegister {
     zero: bool,
     subtract: bool,
@@ -40,6 +42,16 @@ impl std::convert::From<u8> for FlagsRegister {
             half_carry,
             carry,
         }
+    }
+}
+
+impl Debug for FlagsRegister {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Z: {} N: {} H: {} C: {}",
+            self.zero, self.subtract, self.half_carry, self.carry
+        )
     }
 }
 
@@ -82,6 +94,15 @@ struct Registers {
     f: FlagsRegister,
     h: u8,
     l: u8,
+}
+
+impl Debug for Registers {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:X} {:?}\n", self.a, self.f)?;
+        write!(f, "{:X} {:X}\n", self.b, self.c)?;
+        write!(f, "{:X} {:X}\n", self.d, self.e)?;
+        write!(f, "{:X} {:X}\n", self.h, self.l)
+    }
 }
 
 impl Registers {
@@ -192,6 +213,7 @@ impl Registers {
     }
 }
 
+#[derive(Debug)]
 enum Reg {
     A,
     B,
@@ -220,6 +242,7 @@ impl Reg {
     }
 }
 
+#[derive(Debug)]
 enum RegPair {
     BC,
     DE,
@@ -301,6 +324,7 @@ impl MemoryBus {
     }
 
     fn write_byte(&mut self, address: u16, value: u8) -> &mut Self {
+        println!("Writing..");
         if let Some(mem) = Rc::get_mut(&mut self.memory) {
             mem[address as usize] = value;
         } else {
@@ -311,27 +335,32 @@ impl MemoryBus {
     }
 }
 
+#[derive(Debug)]
 enum ArithmeticTarget {
     Register(Reg),
     HL,
     Immediate(u8),
 }
 
+#[derive(Debug)]
 enum BigArithmeticTarget {
     Registers(RegPair),
     Operand(u8),
 }
 
+#[derive(Debug)]
 enum RotateShiftTarget {
     Register(Reg),
     HL,
 }
 
+#[derive(Debug)]
 enum BitTarget {
     Register(Reg),
     HL,
 }
 
+#[derive(Debug)]
 enum LoadTarget {
     Reg2Reg(Reg, Reg),
     Immediate2Reg(Reg, u8),
@@ -357,6 +386,7 @@ enum LoadTarget {
     SP2RAM(u16),
 }
 
+#[derive(Debug)]
 enum Condition {
     NotZero,
     Zero,
@@ -376,22 +406,26 @@ impl Condition {
     }
 }
 
+#[derive(Debug)]
 enum JPTarget {
     Immediate(u16),
     Conditional(Condition, u16),
     HL,
 }
 
+#[derive(Debug)]
 enum JRTarget {
     Immediate(u8),
     Conditional(Condition, u8),
 }
 
+#[derive(Debug)]
 enum CallTarget {
     Immediate(u16),
     Conditional(Condition, u16),
 }
 
+#[derive(Debug)]
 enum Instruction {
     ADD(ArithmeticTarget),
     ADC(ArithmeticTarget),
@@ -481,12 +515,15 @@ impl Instruction {
         }
     }
 
+    // TODO HLRAM -> 0x77?
+    // TODO LD nn -> H instead of HL?
+    // TODO Inc H instead of C?
     fn from_byte<I>(opcode: u8, bytes: &mut I) -> Option<Instruction>
     where
         I: Iterator<Item = (u16, u8)>,
     {
         match opcode {
-            0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E => {
+            0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x3E => {
                 let r = Reg::from_byte((opcode & 0x38) >> 3);
                 let n = Instruction::read_immediate(opcode, bytes);
                 Some(Instruction::LD(LoadTarget::Immediate2Reg(r, n)))
@@ -813,7 +850,7 @@ impl Instruction {
     }
 }
 
-struct CPU {
+pub struct CPU {
     registers: Registers,
     pc: u16,
     sp: u16,
@@ -822,15 +859,32 @@ struct CPU {
     last_instruction: Option<Instruction>,
 }
 
+impl Debug for CPU {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.registers)?;
+        write!(
+            f,
+            "PC: {:X} SP: {:X}\nLAST: {:?}",
+            self.pc, self.sp, self.last_instruction
+        )
+    }
+}
+
 impl CPU {
     pub fn new() -> CPU {
         CPU {
             registers: Registers::new(),
-            pc: 0x100,
+            pc: 0x000,
             sp: 0xFFFE,
             ime: false,
             bus: MemoryBus::new(),
             last_instruction: None,
+        }
+    }
+
+    pub fn load_rom(&mut self, bytes: &Vec<u8>) {
+        for (i, byte) in bytes.iter().enumerate() {
+            self.bus.write_byte(self.pc + (i as u16), *byte);
         }
     }
 
@@ -842,10 +896,13 @@ impl CPU {
             .into_iter();
 
         if let Some(instruction) = Instruction::from_byte(instruction_byte, &mut more_bytes) {
+            let next = more_bytes.cursor;
+            drop(more_bytes);
+
             if let Some(new_pointer) = self.execute(&instruction) {
                 self.pc = new_pointer;
             } else {
-                self.pc = more_bytes.cursor;
+                self.pc = next;
             }
 
             self.last_instruction = Some(instruction);
@@ -1010,8 +1067,12 @@ impl CPU {
                 None
             }
             Instruction::LDHL(e) => {
-                let (value, _is_pos) = CPU::i_to_u16(*e);
-                let (new_value, did_overflow) = self.sp.overflowing_add(value);
+                let (value, is_pos) = CPU::i_to_u16(*e);
+                let (new_value, did_overflow) = if is_pos {
+                    self.sp.overflowing_add(value)
+                } else {
+                    self.sp.overflowing_sub(value)
+                };
 
                 self.registers.f.zero = false;
                 self.registers.f.subtract = false;
@@ -1083,8 +1144,12 @@ impl CPU {
                         self.registers.set_hl(new_value);
                     }
                     BigArithmeticTarget::Operand(e) => {
-                        let (value, _is_pos) = CPU::i_to_u16(*e);
-                        let (new_value, did_overflow) = self.sp.overflowing_add(value);
+                        let (value, is_pos) = CPU::i_to_u16(*e);
+                        let (new_value, did_overflow) = if is_pos {
+                            self.sp.overflowing_add(value)
+                        } else {
+                            self.sp.overflowing_sub(value)
+                        };
 
                         self.registers.f.zero = false;
                         self.registers.f.subtract = false;
@@ -1207,15 +1272,23 @@ impl CPU {
             },
             Instruction::JR(target) => match target {
                 JRTarget::Immediate(n) => {
-                    let (e, _) = CPU::i_to_u16(*n);
+                    let (e, is_pos) = CPU::i_to_u16(*n);
 
-                    Some(self.pc + e + 2)
+                    if is_pos {
+                        Some(self.pc.overflowing_add(e + 2).0)
+                    } else {
+                        Some(self.pc.overflowing_sub(e + 2).0)
+                    }
                 }
                 JRTarget::Conditional(c, n) => {
-                    let (e, _) = CPU::i_to_u16(*n);
+                    let (e, is_pos) = CPU::i_to_u16(*n);
 
                     if self.check_condition(&c) {
-                        Some(self.pc + e + 2)
+                        if is_pos {
+                            Some(self.pc.overflowing_add(e + 2).0)
+                        } else {
+                            Some(self.pc.overflowing_sub(e + 2).0)
+                        }
                     } else {
                         None
                     }
