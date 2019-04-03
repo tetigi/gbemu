@@ -2981,4 +2981,7 @@ mod tests {
 
         assert_eq!(cpu.registers.a, 0x45);
     }
+
+    #[test]
+    fn test_gameboy_start() {}
 }
