@@ -1,4 +1,5 @@
 mod cpu;
+mod memory;
 
 use std::fs::File;
 use std::io::Read;

@@ -1,7 +1,7 @@
+use crate::memory::MemoryBus;
 use std::borrow::Borrow;
 use std::fmt;
 use std::fmt::Debug;
-use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq)]
 struct FlagsRegister {
@@ -277,61 +277,6 @@ impl RegPair {
                 value
             ),
         }
-    }
-}
-
-struct MemoryLocation {
-    cursor: u16,
-    memory: Rc<[u8]>,
-}
-
-impl MemoryLocation {
-    fn new(start_addr: u16, memory: Rc<[u8]>) -> MemoryLocation {
-        MemoryLocation {
-            cursor: start_addr,
-            memory,
-        }
-    }
-}
-
-impl Iterator for MemoryLocation {
-    type Item = (u16, u8);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = (self.cursor, self.memory[self.cursor as usize]);
-        self.cursor = self.cursor.wrapping_add(1);
-
-        Some(result)
-    }
-}
-
-struct MemoryBus {
-    memory: Rc<[u8]>,
-}
-
-impl MemoryBus {
-    fn new() -> MemoryBus {
-        MemoryBus {
-            memory: Rc::new([0; 65_536]),
-        }
-    }
-
-    fn read_byte(&self, address: u16) -> u8 {
-        self.memory[address as usize]
-    }
-
-    fn read_bytes_from(&self, address: u16) -> MemoryLocation {
-        MemoryLocation::new(address, Rc::clone(&self.memory))
-    }
-
-    fn write_byte(&mut self, address: u16, value: u8) -> &mut Self {
-        if let Some(mem) = Rc::get_mut(&mut self.memory) {
-            mem[address as usize] = value;
-        } else {
-            panic!("Cannot mutably write whilst borrowed at 0x{:x}", address);
-        }
-
-        self
     }
 }
 
