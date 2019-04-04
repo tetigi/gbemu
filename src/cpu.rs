@@ -1749,8 +1749,8 @@ impl CPU {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use std::io::Read;
+    //use std::fs::File;
+    //use std::io::Read;
 
     #[test]
     fn test_add_register_register() {
@@ -2979,43 +2979,40 @@ mod tests {
         assert_eq!(cpu.registers.a, 0x45);
     }
 
-    #[test]
-    fn test_gameboy_start() {
-        let mut cpu = CPU::new();
-        let mut buffer = Vec::new();
-        let mut f = File::open("DMG_ROM.bin").unwrap();
-        f.read_to_end(&mut buffer).unwrap();
-        cpu.load_rom(&buffer);
+    //#[test]
+    //fn test_gameboy_start() {
+    //    let mut cpu = CPU::new();
+    //    let mut buffer = Vec::new();
+    //    let mut f = File::open("DMG_ROM.bin").unwrap();
+    //    f.read_to_end(&mut buffer).unwrap();
+    //    cpu.load_rom(&buffer);
 
-        let cmds = vec![
-            (
-                Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::SP, 0xFFFE)),
-                0,
-            ),
-            (Instruction::XOR(ArithmeticTarget::Register(Reg::A)), 3),
-            (
-                Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::HL, 0x9FFF)),
-                4,
-            ),
-            (Instruction::LD(LoadTarget::A2HLD), 7),
-            (Instruction::BIT(7, BitTarget::Register(Reg::H)), 8),
-            (
-                Instruction::JR(JRTarget::Conditional(
-                    Condition::NotZero,
-                    (!(0x5 as u8) + 1),
-                )),
-                0xA,
-            ),
-            (
-                Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::HL, 0xFF26)),
-                0xC,
-            ),
-        ];
+    //    let cmds = vec![
+    //        (
+    //            Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::SP, 0xFFFE)),
+    //            0,
+    //        ),
+    //        (Instruction::XOR(ArithmeticTarget::Register(Reg::A)), 3),
+    //        (
+    //            Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::HL, 0x9FFF)),
+    //            4,
+    //        ),
+    //        (Instruction::LD(LoadTarget::A2HLD), 7),
+    //        (Instruction::BIT(7, BitTarget::Register(Reg::H)), 8),
+    //        (
+    //            Instruction::JR(JRTarget::Conditional(Condition::NotZero, !(0x5 as u8) + 1)),
+    //            0xA,
+    //        ),
+    //        (
+    //            Instruction::LD(LoadTarget::BigImmediate2Regs(RegPair::HL, 0xFF26)),
+    //            0xC,
+    //        ),
+    //    ];
 
-        for (cmd, pc) in cmds.into_iter() {
-            assert_eq!(cpu.pc, pc);
-            cpu.step();
-            assert_eq!(cpu.last_instruction, Some(cmd));
-        }
-    }
+    //    for (cmd, pc) in cmds.into_iter() {
+    //        assert_eq!(cpu.pc, pc);
+    //        cpu.step();
+    //        assert_eq!(cpu.last_instruction, Some(cmd));
+    //    }
+    //}
 }
