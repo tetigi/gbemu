@@ -1,4 +1,5 @@
 mod cpu;
+mod gpu;
 mod memory;
 
 use std::fs::File;
