@@ -1,6 +1,6 @@
-use fmt::Debug;
 use std::borrow::Borrow;
 use std::fmt;
+use std::fmt::Debug;
 use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -55,6 +55,7 @@ impl Debug for FlagsRegister {
     }
 }
 
+#[allow(dead_code)]
 impl FlagsRegister {
     fn new() -> FlagsRegister {
         FlagsRegister {
@@ -528,7 +529,7 @@ impl Instruction {
                 let n = Instruction::read_immediate(opcode, bytes);
                 Some(Instruction::LD(LoadTarget::Immediate2Reg(r, n)))
             }
-            0x7F | 0x78 | 0x79 | 0x7A | 0x7B | 0x7C | 0x7D | 0x7F => {
+            0x7F | 0x78 | 0x79 | 0x7A | 0x7B | 0x7C | 0x7D => {
                 let r1 = Reg::A;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
@@ -546,7 +547,7 @@ impl Instruction {
 
                 Some(Instruction::LD(LoadTarget::Reg2Reg(r1, r2)))
             }
-            0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 | 0x47 => {
+            0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 | 0x57 => {
                 let r1 = Reg::D;
                 let r2 = Reg::from_byte(opcode & 0x07);
 
@@ -604,8 +605,8 @@ impl Instruction {
             }
             0xF2 => Some(Instruction::LD(LoadTarget::CRAM2A)),
             0xE2 => Some(Instruction::LD(LoadTarget::A2CRAM)),
-            0x2A => Some(Instruction::LD(LoadTarget::A2HLI)),
-            0x3A => Some(Instruction::LD(LoadTarget::A2HLD)),
+            0x2A => Some(Instruction::LD(LoadTarget::HLI2A)),
+            0x3A => Some(Instruction::LD(LoadTarget::HLD2A)),
             0x02 => Some(Instruction::LD(LoadTarget::A2BC)),
             0x12 => Some(Instruction::LD(LoadTarget::A2DE)),
             0x22 => Some(Instruction::LD(LoadTarget::A2HLI)),
@@ -623,6 +624,10 @@ impl Instruction {
             0xC1 | 0xD1 | 0xE1 | 0xF1 => Some(Instruction::POP(RegPair::from_byte_qq(
                 (opcode >> 4) & 0x03,
             ))),
+            0xF8 => {
+                let n = Instruction::read_immediate(opcode, bytes);
+                Some(Instruction::LDHL(n))
+            }
             0x08 => {
                 let nn = Instruction::read_big_immediate_lh(opcode, bytes);
                 Some(Instruction::LD(LoadTarget::SP2RAM(nn)))
@@ -1270,12 +1275,12 @@ impl CPU {
             },
             Instruction::JR(target) => match target {
                 JRTarget::Immediate(n) => {
-                    let (e, is_pos) = CPU::i_to_u16(*n);
+                    let (e, _is_pos) = CPU::i_to_u16(*n);
 
                     Some(self.pc.overflowing_add(e + 2).0)
                 }
                 JRTarget::Conditional(c, n) => {
-                    let (e, is_pos) = CPU::i_to_u16(*n);
+                    let (e, _is_pos) = CPU::i_to_u16(*n);
 
                     if self.check_condition(&c) {
                         Some(self.pc.overflowing_add(e + 2).0)
