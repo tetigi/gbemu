@@ -18,8 +18,8 @@ fn main() -> std::io::Result<()> {
     let display = display::Display::init();
     let mut gpu = gpu::GPU::new(display);
     gpu.do_thing();
-    let bus = memory::MemoryBus::new(gpu);
-    let mut cpu = cpu::CPU::new(bus);
+    let mut bus = memory::MMU::new(&mut gpu);
+    let mut cpu = cpu::CPU::new(&mut bus);
 
     cpu.load_rom(&buffer);
     cpu.step();

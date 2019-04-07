@@ -26,20 +26,28 @@ impl Iterator for MemoryLocation {
     }
 }
 
-pub struct MemoryBus {
+pub struct MMU<'a> {
     memory: Rc<[u8]>,
-    gpu: gpu::GPU,
+    gpu: &'a mut gpu::GPU,
 }
 
-impl MemoryBus {
-    pub fn new(gpu: gpu::GPU) -> MemoryBus {
-        MemoryBus {
+pub trait MemoryBus {
+    fn read_byte(&self, address: u16) -> u8;
+    fn read_bytes_from(&self, address: u16) -> MemoryLocation;
+    fn write_byte(&mut self, address: u16, value: u8);
+}
+
+impl<'a> MMU<'a> {
+    pub fn new<'n>(gpu: &'n mut gpu::GPU) -> MMU<'n> {
+        MMU {
             memory: Rc::new([0; 65_536]),
             gpu,
         }
     }
+}
 
-    pub fn read_byte(&self, address: u16) -> u8 {
+impl<'a> MemoryBus for MMU<'a> {
+    fn read_byte(&self, address: u16) -> u8 {
         let address = address as usize;
         match address {
             gpu::VRAM_BEGIN...gpu::VRAM_END => self.gpu.read_vram(address - gpu::VRAM_BEGIN),
@@ -47,11 +55,11 @@ impl MemoryBus {
         }
     }
 
-    pub fn read_bytes_from(&self, address: u16) -> MemoryLocation {
+    fn read_bytes_from(&self, address: u16) -> MemoryLocation {
         MemoryLocation::new(address, Rc::clone(&self.memory))
     }
 
-    pub fn write_byte(&mut self, address: u16, value: u8) -> &mut Self {
+    fn write_byte(&mut self, address: u16, value: u8) {
         if let Some(mem) = Rc::get_mut(&mut self.memory) {
             let address = address as usize;
             match address {
@@ -64,8 +72,6 @@ impl MemoryBus {
             }
         } else {
             panic!("Cannot mutably write whilst borrowed at 0x{:x}", address);
-        }
-
-        self
+        };
     }
 }
