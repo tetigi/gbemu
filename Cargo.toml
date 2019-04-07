@@ -5,3 +5,4 @@ authors = ["Luke Tomlin <luke.tomlin@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+sdl2 = "0.32.2"

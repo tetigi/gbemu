@@ -822,13 +822,13 @@ impl Debug for CPU {
 }
 
 impl CPU {
-    pub fn new() -> CPU {
+    pub fn new(bus: MemoryBus) -> CPU {
         CPU {
             registers: Registers::new(),
             pc: 0x000,
             sp: 0xFFFE,
             ime: false,
-            bus: MemoryBus::new(),
+            bus,
             last_instruction: None,
         }
     }

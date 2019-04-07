@@ -32,10 +32,10 @@ pub struct MemoryBus {
 }
 
 impl MemoryBus {
-    pub fn new() -> MemoryBus {
+    pub fn new(gpu: gpu::GPU) -> MemoryBus {
         MemoryBus {
             memory: Rc::new([0; 65_536]),
-            gpu: gpu::GPU::new(),
+            gpu,
         }
     }
 

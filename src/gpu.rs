@@ -1,3 +1,6 @@
+use crate::display;
+use crate::display::Colour;
+
 pub const VRAM_BEGIN: usize = 0x8000;
 pub const VRAM_END: usize = 0x9FFF;
 pub const VRAM_SIZE: usize = VRAM_END - VRAM_BEGIN + 1;
@@ -19,14 +22,24 @@ fn empty_tile() -> Tile {
 pub struct GPU {
     vram: [u8; VRAM_SIZE],
     tile_set: [Tile; 384],
+    display: display::Display,
 }
 
 impl GPU {
-    pub fn new() -> GPU {
+    pub fn new(display: display::Display) -> GPU {
         GPU {
+            display,
             vram: [0; VRAM_SIZE],
             tile_set: [empty_tile(); 384],
         }
+    }
+
+    pub fn do_thing(&mut self) {
+        self.display.write_pixel(5, 5, Colour::Black);
+        self.display.write_pixel(6, 6, Colour::Black);
+        self.display.write_pixel(7, 7, Colour::Black);
+        self.display.write_pixel(8, 8, Colour::Black);
+        self.display.refresh();
     }
 
     pub fn read_vram(&self, addr: usize) -> u8 {
